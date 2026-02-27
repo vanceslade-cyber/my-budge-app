@@ -52,25 +52,8 @@ with st.expander("➕ Log New Transaction", expanded=True):
                 st.rerun()
             else:
                 st.warning("Please enter a merchant and an amount.")
+
 # 6. Display Recent Transactions
 st.subheader("Recent Activity")
 if not df.empty:
-    st.table(df.iloc[::-1].head(10)) st.form_submit_button("Save to Google Sheets", use_container_width=True):
-            if t_merch and t_amt > 0:
-                new_row = pd.DataFrame([{
-                    "Date": str(t_date),
-                    "Merchant": t_merch,
-                    "Category": t_cat,
-                    "Amount": t_amt
-                }])
-                
-                # Combine existing data with the new row
-                updated_df = pd.concat([df, new_row], ignore_index=True)
-                
-                # Use 'worksheet="Sheet1"' to be explicit (Check your tab name at the bottom of Google Sheets!)
-                conn.update(worksheet="Sheet1", data=updated_df)
-                
-                st.success("Transaction Securely Synced!")
-                st.rerun()
-            else:
-                st.warning("Please enter a merchant and an amount.")
+    st.table(df.iloc[::-1].head(10))
