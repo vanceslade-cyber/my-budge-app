@@ -1,36 +1,28 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-import os
 
 # 1. Page Config
-st.set_page_config(page_title="My Budget", layout="centered")
-st.title("💰 My Mobile Budget")
+st.set_page_config(page_title="My Mobile Budget", layout="centered")
+st.title("💰 My Permanent Budget")
 
-# 2. Data Loading (The "Crash-Proof" Version)
-csv_file = "my_budget_data.csv"
-columns = ["Date", "Merchant", "Category", "Amount"]
+# 2. Establish Secure Connection
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Check if file exists AND isn't empty
-if os.path.exists(csv_file) and os.path.getsize(csv_file) > 0:
-    try:
-        df = pd.read_csv(csv_file)
-    except Exception:
-        # If the file is corrupted or unreadable, start fresh
-        df = pd.DataFrame(columns=columns)
-else:
-    # If the file is missing or 0 bytes, create the structure
-    df = pd.DataFrame(columns=columns)
+# 3. Read Existing Data
+# Use 'ttl=0' so it refreshes every time we open the app (Cybersecurity "Live" Data)
+df = conn.read(ttl=0)
 
-# 3. Calculations
+# 4. Calculations (The EveryDollar Logic)
 income = st.sidebar.number_input("Monthly Income ($)", min_value=0.0, value=5000.0)
 total_spent = df['Amount'].sum() if not df.empty else 0.0
 remaining = income - total_spent
 
 col1, col2 = st.columns(2)
-col1.metric("Remaining", f"${remaining:,.2f}")
+col1.metric("Remaining to Assign", f"${remaining:,.2f}")
 col2.metric("Total Spent", f"${total_spent:,.2f}")
 
-# 4. Input Form
+# 5. Input Form
 st.divider()
 with st.expander("➕ Log New Transaction", expanded=True):
     with st.form("entry_form", clear_on_submit=True):
@@ -39,20 +31,23 @@ with st.expander("➕ Log New Transaction", expanded=True):
         t_cat = st.selectbox("Category", ["Housing", "Food", "Soccer", "Auto", "Savings", "Other"])
         t_amt = st.number_input("Amount ($)", min_value=0.0)
         
-        if st.form_submit_button("Save Transaction", use_container_width=True):
-            # Create a new line of data
-            new_data = pd.DataFrame([[str(t_date), t_merch, t_cat, t_amt]], columns=columns)
-            # Append it to the main table
-            df = pd.concat([df, new_data], ignore_index=True)
-            # Save it back to the file
-            df.to_csv(csv_file, index=False)
-            st.success("Saved!")
+        if st.form_submit_button("Save to Google Sheets", use_container_width=True):
+            # Create a new row
+            new_row = pd.DataFrame([{
+                "Date": str(t_date),
+                "Merchant": t_merch,
+                "Category": t_cat,
+                "Amount": t_amt
+            }])
+            
+            # Combine and Update the Sheet
+            updated_df = pd.concat([df, new_row], ignore_index=True)
+            conn.update(data=updated_df)
+            
+            st.success("Transaction Securely Synced!")
             st.rerun()
 
-# 5. Display List
-st.subheader("Recent Spending")
+# 6. Display Recent Transactions
+st.subheader("Recent Activity")
 if not df.empty:
-    # Shows newest transactions first
     st.table(df.iloc[::-1].head(10))
-else:
-    st.info("No transactions logged yet. Use the form above to start!")
