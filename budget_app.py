@@ -157,18 +157,16 @@ with tab_budget:
 with tab_transactions:
     st.subheader(f"History for {current_month_str}")
     
-    # --- THE X-RAY IS RIGHT HERE ---
-    st.write("🕵️‍♂️ RAW DATABASE VIEW:", df)
-    
     if not filtered_df.empty:
         display_df = filtered_df.copy()
         display_df['Date'] = display_df['Date'].dt.strftime('%Y-%m-%d')
         
+        # The styling fix: use an empty string instead of 'color: inherit'
         def style_rows(row):
             if 'Type' in row and row['Type'] == 'Income':
                 return ['color: #1a8b4c'] * len(row) 
             else:
-                return ['color: inherit'] * len(row)
+                return [''] * len(row)
 
         styled_df = display_df.iloc[::-1].head(10).style.apply(style_rows, axis=1)
         st.dataframe(styled_df, use_container_width=True, hide_index=True)
