@@ -163,7 +163,17 @@ with tab_budget:
 # 💳 VIEW 2: THE TRANSACTIONS TAB
 # ==========================================
 with tab_transactions:
+    # ==========================================
+# 💳 VIEW 2: THE TRANSACTIONS TAB
+# ==========================================
+with tab_transactions:
     st.subheader(f"History for {current_month_str}")
+    
+    # --- ADD THIS SINGLE X-RAY LINE ---
+    st.write("🕵️‍♂️ RAW DATABASE VIEW:", df) 
+    
+    if not filtered_df.empty:
+# ... (rest of the code below stays exactly the same)    st.subheader(f"History for {current_month_str}")
     if not filtered_df.empty:
         display_df = filtered_df.copy()
         display_df['Date'] = display_df['Date'].dt.strftime('%Y-%m-%d')
