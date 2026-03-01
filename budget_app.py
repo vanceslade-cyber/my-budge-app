@@ -53,7 +53,8 @@ def transaction_modal():
         if st.form_submit_button("Securely Sync Transaction", use_container_width=True):
             if t_merch and t_amt > 0 and t_cat != "Select >":
                 clean_type = tx_type.split(" ")[1] 
-                new_row = pd.DataFrame([[str(t_date), clean_type, t_merch, t_cat, t_amt]], columns=df.columns)
+                # FIX 1: Hardcoded columns to prevent shape mismatch
+                new_row = pd.DataFrame([[str(t_date), clean_type, t_merch, t_cat, t_amt]], columns=["Date", "Type", "Merchant", "Category", "Amount"])
                 try:
                     updated_df = pd.concat([df, new_row], ignore_index=True)
                     conn.update(worksheet="Sheet1", data=updated_df)
@@ -73,7 +74,8 @@ def add_income_modal():
         if st.form_submit_button("Save Income", use_container_width=True):
             if i_name and i_amt > 0:
                 current_month_key = st.session_state.view_date.strftime("%Y-%m")
-                new_plan = pd.DataFrame([[current_month_key, "Income", i_name, i_amt]], columns=plan_df.columns)
+                # FIX 2: Hardcoded columns to prevent shape mismatch
+                new_plan = pd.DataFrame([[current_month_key, "Income", i_name, i_amt]], columns=["Month", "Type", "Category", "Planned_Amount"])
                 try:
                     updated_plan = pd.concat([plan_df, new_plan], ignore_index=True)
                     conn.update(worksheet="Plan", data=updated_plan)
@@ -128,7 +130,7 @@ with tab_budget:
     total_spent = expense_df['Amount'].astype(float).sum() if not expense_df.empty else 0.0
     remaining = total_planned_income - total_spent
     
-    # --- UPGRADED 3-COLUMN METRICS DASHBOARD ---
+    # UPGRADED 3-COLUMN METRICS DASHBOARD
     col1, col2, col3 = st.columns(3)
     col1.metric("Planned Income", f"${total_planned_income:,.2f}")
     col2.metric("Left to Assign", f"${remaining:,.2f}")
