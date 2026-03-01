@@ -8,7 +8,9 @@ st.set_page_config(page_title="EveryDollar Clone", layout="centered")
 
 # --- STATE MANAGEMENT ---
 if 'view_date' not in st.session_state:
-    st.session_state.view_date = datetime.date.today().replace(day=1)
+    # Fixed the main page Time Zone bug here!
+    local_now = datetime.datetime.now(ZoneInfo("America/Edmonton")).date()
+    st.session_state.view_date = local_now.replace(day=1)
 
 def change_month(months_to_add):
     new_month = st.session_state.view_date.month - 1 + months_to_add
@@ -19,7 +21,6 @@ def change_month(months_to_add):
 # --- DATABASE CONNECTION ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Read Transactions (Sheet1)
 try:
     df = conn.read(worksheet="Sheet1", ttl=0)
     if 'Type' not in df.columns:
@@ -29,7 +30,6 @@ except Exception as e:
     st.error(f"Transaction handshake failed. Error: {e}")
     df = pd.DataFrame(columns=["Date", "Type", "Merchant", "Category", "Amount"])
 
-# Read Plan (Plan)
 try:
     plan_df = conn.read(worksheet="Plan", ttl=0)
 except Exception as e:
@@ -43,7 +43,6 @@ def transaction_modal():
         tx_type = st.radio("Type", ["- Expense", "+ Income"], horizontal=True, label_visibility="collapsed")
         st.divider()
         
-        # --- THE TIMEZONE FIX IS RIGHT HERE ---
         local_now = datetime.datetime.now(ZoneInfo("America/Edmonton")).date()
         t_date = st.date_input("Date", value=local_now)
         
@@ -122,11 +121,12 @@ tab_budget, tab_transactions = st.tabs(["📊 Budget", "💳 Transactions"])
 # 📊 VIEW 1: THE BUDGET TAB
 # ==========================================
 with tab_budget:
-    total_planned_income = income_df['Planned_Amount'].astype(float).sum() if not income_df.empty else 0.0
+    # --- THE NEW STATE CONTROLLER (TOGGLE) ---
+    budget_view = st.radio("Budget View", ["Planned", "Spent", "Remaining"], horizontal=True, label_visibility="collapsed")
     
+    total_planned_income = income_df['Planned_Amount'].astype(float).sum() if not income_df.empty else 0.0
     expense_df = filtered_df[filtered_df['Type'] != 'Income'] if not filtered_df.empty else pd.DataFrame()
     total_spent = expense_df['Amount'].astype(float).sum() if not expense_df.empty else 0.0
-    
     remaining = total_planned_income - total_spent
     
     col1, col2 = st.columns(2)
@@ -139,17 +139,36 @@ with tab_budget:
     with col_title:
         st.markdown("<h5 style='color: gray; margin-bottom: 0px;'>Income</h5>", unsafe_allow_html=True)
     with col_planned:
-        st.markdown("<p style='color: gray; text-align: right; margin-bottom: 0px;'>Planned</p>", unsafe_allow_html=True)
+        # The right-hand column header now changes based on your toggle click!
+        st.markdown(f"<p style='color: gray; text-align: right; margin-bottom: 0px;'>{budget_view}</p>", unsafe_allow_html=True)
     
     st.markdown("<hr style='margin-top: 5px; margin-bottom: 10px;'>", unsafe_allow_html=True)
     
     if not income_df.empty:
         for index, row in income_df.iterrows():
+            
+            # 1. Grab the goal amount
+            planned_amt = float(row['Planned_Amount'])
+            
+            # 2. Search history for actuals
+            if not filtered_df.empty:
+                cat_spent = filtered_df[(filtered_df['Category'] == row['Category']) & (filtered_df['Type'] == 'Income')]['Amount'].astype(float).sum()
+            else:
+                cat_spent = 0.0
+            
+            # 3. Apply the Toggle Logic
+            if budget_view == "Planned":
+                display_amt = planned_amt
+            elif budget_view == "Spent":
+                display_amt = cat_spent
+            else: # Remaining
+                display_amt = planned_amt - cat_spent
+
             col_name, col_amt = st.columns([3, 1])
             with col_name:
                 st.write(row['Category'])
             with col_amt:
-                st.markdown(f"<p style='text-align: right;'>${float(row['Planned_Amount']):,.2f}</p>", unsafe_allow_html=True)
+                st.markdown(f"<p style='text-align: right;'>${display_amt:,.2f}</p>", unsafe_allow_html=True)
             st.markdown("<hr style='margin-top: 0px; margin-bottom: 10px; border-top: 1px solid #e6e6e6;'>", unsafe_allow_html=True)
     
     if st.button("Add Income", type="tertiary"):
