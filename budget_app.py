@@ -47,13 +47,12 @@ def transaction_modal():
         
         t_amt = st.number_input("Amount ($)", min_value=0.00, value=0.00, step=0.01)
         t_merch = st.text_input("Merchant", placeholder="Enter Name")
-        t_cat = st.selectbox("Budget Item(s)", ["Select >", "Tots Bucks", "Housing", "Food", "Soccer", "Auto", "Savings", "Other"])
+        t_cat = st.selectbox("Budget Item(s)", ["Select >", "Tots Bucks", "Mo Tithe 10%", "Housing", "Food", "Soccer", "Auto", "Savings", "Other"])
 
         st.divider()
         if st.form_submit_button("Securely Sync Transaction", use_container_width=True):
             if t_merch and t_amt > 0 and t_cat != "Select >":
                 clean_type = tx_type.split(" ")[1] 
-                # FIX 1: Hardcoded columns to prevent shape mismatch
                 new_row = pd.DataFrame([[str(t_date), clean_type, t_merch, t_cat, t_amt]], columns=["Date", "Type", "Merchant", "Category", "Amount"])
                 try:
                     updated_df = pd.concat([df, new_row], ignore_index=True)
@@ -74,12 +73,32 @@ def add_income_modal():
         if st.form_submit_button("Save Income", use_container_width=True):
             if i_name and i_amt > 0:
                 current_month_key = st.session_state.view_date.strftime("%Y-%m")
-                # FIX 2: Hardcoded columns to prevent shape mismatch
                 new_plan = pd.DataFrame([[current_month_key, "Income", i_name, i_amt]], columns=["Month", "Type", "Category", "Planned_Amount"])
                 try:
                     updated_plan = pd.concat([plan_df, new_plan], ignore_index=True)
                     conn.update(worksheet="Plan", data=updated_plan)
                     st.success("✅ Income Added!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Write unauthorized. Error: {e}")
+            else:
+                st.warning("Please enter a name and amount.")
+
+@st.dialog("❤️ Add Giving")
+def add_giving_modal():
+    with st.form("giving_form", clear_on_submit=True):
+        g_name = st.text_input("Giving Name", placeholder="e.g., Mo Tithe 10%")
+        g_amt = st.number_input("Planned Amount ($)", min_value=0.00, step=10.00)
+        
+        if st.form_submit_button("Save Giving", use_container_width=True):
+            if g_name and g_amt > 0:
+                current_month_key = st.session_state.view_date.strftime("%Y-%m")
+                # Notice we save this specifically as the "Giving" Type!
+                new_plan = pd.DataFrame([[current_month_key, "Giving", g_name, g_amt]], columns=["Month", "Type", "Category", "Planned_Amount"])
+                try:
+                    updated_plan = pd.concat([plan_df, new_plan], ignore_index=True)
+                    conn.update(worksheet="Plan", data=updated_plan)
+                    st.success("✅ Giving Added!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Write unauthorized. Error: {e}")
@@ -98,7 +117,10 @@ if not filtered_df.empty:
     filtered_df = filtered_df[mask]
 
 month_plan_df = plan_df[plan_df['Month'] == current_month_key] if not plan_df.empty else pd.DataFrame()
+
+# Separate the plan into chunks!
 income_df = month_plan_df[month_plan_df['Type'] == 'Income'] if not month_plan_df.empty else pd.DataFrame()
+giving_df = month_plan_df[month_plan_df['Type'] == 'Giving'] if not month_plan_df.empty else pd.DataFrame()
 
 # --- APP HEADER ---
 st.title("💰 Budget Manager")
@@ -122,7 +144,6 @@ tab_budget, tab_transactions = st.tabs(["📊 Budget", "💳 Transactions"])
 # 📊 VIEW 1: THE BUDGET TAB
 # ==========================================
 with tab_budget:
-    # THE STATE CONTROLLER (TOGGLE)
     budget_view = st.radio("Budget View", ["Planned", "Spent", "Remaining"], horizontal=True, label_visibility="collapsed")
     
     total_planned_income = income_df['Planned_Amount'].astype(float).sum() if not income_df.empty else 0.0
@@ -130,7 +151,6 @@ with tab_budget:
     total_spent = expense_df['Amount'].astype(float).sum() if not expense_df.empty else 0.0
     remaining = total_planned_income - total_spent
     
-    # UPGRADED 3-COLUMN METRICS DASHBOARD
     col1, col2, col3 = st.columns(3)
     col1.metric("Planned Income", f"${total_planned_income:,.2f}")
     col2.metric("Left to Assign", f"${remaining:,.2f}")
@@ -138,7 +158,7 @@ with tab_budget:
     
     st.write("") 
     
-    # THE INCOME SECTION
+    # --- 1. THE INCOME SECTION ---
     col_title, col_planned = st.columns([3, 1])
     with col_title:
         st.markdown("<h5 style='color: gray; margin-bottom: 0px;'>Income</h5>", unsafe_allow_html=True)
@@ -149,7 +169,6 @@ with tab_budget:
     
     if not income_df.empty:
         for index, row in income_df.iterrows():
-            
             planned_amt = float(row['Planned_Amount'])
             
             if not filtered_df.empty:
@@ -173,6 +192,45 @@ with tab_budget:
     
     if st.button("Add Income", type="tertiary"):
         add_income_modal()
+
+    st.write("") # Extra spacer between sections
+    st.write("") 
+
+    # --- 2. THE GIVING SECTION ---
+    col_title_g, col_planned_g = st.columns([3, 1])
+    with col_title_g:
+        st.markdown("<h5 style='color: gray; margin-bottom: 0px;'>Giving</h5>", unsafe_allow_html=True)
+    with col_planned_g:
+        st.markdown(f"<p style='color: gray; text-align: right; margin-bottom: 0px;'>{budget_view}</p>", unsafe_allow_html=True)
+    
+    st.markdown("<hr style='margin-top: 5px; margin-bottom: 10px;'>", unsafe_allow_html=True)
+    
+    if not giving_df.empty:
+        for index, row in giving_df.iterrows():
+            planned_amt = float(row['Planned_Amount'])
+            
+            if not filtered_df.empty:
+                # Giving subtracts money, so we look for 'Expense' transactions!
+                cat_spent = filtered_df[(filtered_df['Category'] == row['Category']) & (filtered_df['Type'] == 'Expense')]['Amount'].astype(float).sum()
+            else:
+                cat_spent = 0.0
+            
+            if budget_view == "Planned":
+                display_amt = planned_amt
+            elif budget_view == "Spent":
+                display_amt = cat_spent
+            else: 
+                display_amt = planned_amt - cat_spent
+
+            col_name, col_amt = st.columns([3, 1])
+            with col_name:
+                st.write(row['Category'])
+            with col_amt:
+                st.markdown(f"<p style='text-align: right;'>${display_amt:,.2f}</p>", unsafe_allow_html=True)
+            st.markdown("<hr style='margin-top: 0px; margin-bottom: 10px; border-top: 1px solid #e6e6e6;'>", unsafe_allow_html=True)
+    
+    if st.button("Add Giving", type="tertiary"):
+        add_giving_modal()
 
 # ==========================================
 # 💳 VIEW 2: THE TRANSACTIONS TAB
