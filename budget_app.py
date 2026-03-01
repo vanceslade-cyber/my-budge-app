@@ -21,10 +21,8 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 # Read Transactions (Sheet1)
 try:
     df = conn.read(worksheet="Sheet1", ttl=0)
-    # FAIL-SAFE: If the 'Type' column is missing, add it to prevent crashes!
     if 'Type' not in df.columns:
         df['Type'] = 'Expense'
-    # Fill any empty Type cells in old transactions with 'Expense'
     df['Type'] = df['Type'].fillna('Expense')
 except Exception as e:
     st.error(f"Transaction handshake failed. Error: {e}")
@@ -41,7 +39,6 @@ except Exception as e:
 @st.dialog("➕ Add Transaction")
 def transaction_modal():
     with st.form("entry_form", clear_on_submit=True):
-        # The Toggle!
         tx_type = st.radio("Type", ["- Expense", "+ Income"], horizontal=True, label_visibility="collapsed")
         st.divider()
         
@@ -53,7 +50,7 @@ def transaction_modal():
         st.divider()
         if st.form_submit_button("Securely Sync Transaction", use_container_width=True):
             if t_merch and t_amt > 0 and t_cat != "Select >":
-                clean_type = tx_type.split(" ")[1] # Extracts just "Expense" or "Income"
+                clean_type = tx_type.split(" ")[1] 
                 new_row = pd.DataFrame([[str(t_date), clean_type, t_merch, t_cat, t_amt]], columns=df.columns)
                 try:
                     updated_df = pd.concat([df, new_row], ignore_index=True)
@@ -89,7 +86,6 @@ def add_income_modal():
 current_month_str = st.session_state.view_date.strftime("%B %Y")
 current_month_key = st.session_state.view_date.strftime("%Y-%m")
 
-# Filter Transactions
 filtered_df = df.copy()
 if not filtered_df.empty:
     filtered_df['Date'] = pd.to_datetime(filtered_df['Date'], errors='coerce')
@@ -97,7 +93,6 @@ if not filtered_df.empty:
            (filtered_df['Date'].dt.year == st.session_state.view_date.year)
     filtered_df = filtered_df[mask]
 
-# Filter Plan
 month_plan_df = plan_df[plan_df['Month'] == current_month_key] if not plan_df.empty else pd.DataFrame()
 income_df = month_plan_df[month_plan_df['Type'] == 'Income'] if not month_plan_df.empty else pd.DataFrame()
 
@@ -123,10 +118,8 @@ tab_budget, tab_transactions = st.tabs(["📊 Budget", "💳 Transactions"])
 # 📊 VIEW 1: THE BUDGET TAB
 # ==========================================
 with tab_budget:
-    # 1. Top Metrics calculation
     total_planned_income = income_df['Planned_Amount'].astype(float).sum() if not income_df.empty else 0.0
     
-    # Only sum up the "Expense" transactions for the Total Spent metric!
     expense_df = filtered_df[filtered_df['Type'] != 'Income'] if not filtered_df.empty else pd.DataFrame()
     total_spent = expense_df['Amount'].astype(float).sum() if not expense_df.empty else 0.0
     
@@ -136,9 +129,8 @@ with tab_budget:
     col1.metric("Remaining to Assign", f"${remaining:,.2f}")
     col2.metric("Total Spent", f"${total_spent:,.2f}")
     
-    st.write("") # Spacer
+    st.write("") 
     
-    # 2. THE INCOME SECTION
     col_title, col_planned = st.columns([3, 1])
     with col_title:
         st.markdown("<h5 style='color: gray; margin-bottom: 0px;'>Income</h5>", unsafe_allow_html=True)
@@ -163,25 +155,18 @@ with tab_budget:
 # 💳 VIEW 2: THE TRANSACTIONS TAB
 # ==========================================
 with tab_transactions:
-    # ==========================================
-# 💳 VIEW 2: THE TRANSACTIONS TAB
-# ==========================================
-with tab_transactions:
     st.subheader(f"History for {current_month_str}")
     
-    # --- ADD THIS SINGLE X-RAY LINE ---
-    st.write("🕵️‍♂️ RAW DATABASE VIEW:", df) 
+    # --- THE X-RAY IS RIGHT HERE ---
+    st.write("🕵️‍♂️ RAW DATABASE VIEW:", df)
     
-    if not filtered_df.empty:
-# ... (rest of the code below stays exactly the same)    st.subheader(f"History for {current_month_str}")
     if not filtered_df.empty:
         display_df = filtered_df.copy()
         display_df['Date'] = display_df['Date'].dt.strftime('%Y-%m-%d')
         
-        # Safe styling function (checks if Type exists just in case)
         def style_rows(row):
             if 'Type' in row and row['Type'] == 'Income':
-                return ['color: #1a8b4c'] * len(row) # EveryDollar Green!
+                return ['color: #1a8b4c'] * len(row) 
             else:
                 return ['color: inherit'] * len(row)
 
