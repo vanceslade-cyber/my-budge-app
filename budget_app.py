@@ -1,5 +1,6 @@
 import streamlit as st
-from zoneinfo import ZoneInfofrom streamlit_gsheets import GSheetsConnection
+from zoneinfo import ZoneInfo
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import datetime
 
@@ -42,10 +43,10 @@ def transaction_modal():
         tx_type = st.radio("Type", ["- Expense", "+ Income"], horizontal=True, label_visibility="collapsed")
         st.divider()
         
-        # Grabs the current time specifically in the Edmonton/Mountain time zone
-local_now = datetime.datetime.now(ZoneInfo("America/Edmonton")).date()
-
-t_date = st.date_input("Date", value=local_now)
+        # --- THE TIMEZONE FIX IS RIGHT HERE ---
+        local_now = datetime.datetime.now(ZoneInfo("America/Edmonton")).date()
+        t_date = st.date_input("Date", value=local_now)
+        
         t_amt = st.number_input("Amount ($)", min_value=0.00, value=0.00, step=0.01)
         t_merch = st.text_input("Merchant", placeholder="Enter Name")
         t_cat = st.selectbox("Budget Item(s)", ["Select >", "Tots Bucks", "Housing", "Food", "Soccer", "Auto", "Savings", "Other"])
@@ -164,7 +165,6 @@ with tab_transactions:
         display_df = filtered_df.copy()
         display_df['Date'] = display_df['Date'].dt.strftime('%Y-%m-%d')
         
-        # The styling fix: use an empty string instead of 'color: inherit'
         def style_rows(row):
             if 'Type' in row and row['Type'] == 'Income':
                 return ['color: #1a8b4c'] * len(row) 
