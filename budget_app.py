@@ -8,7 +8,6 @@ st.set_page_config(page_title="EveryDollar Clone", layout="centered")
 
 # --- STATE MANAGEMENT ---
 if 'view_date' not in st.session_state:
-    # Fixed the main page Time Zone bug here!
     local_now = datetime.datetime.now(ZoneInfo("America/Edmonton")).date()
     st.session_state.view_date = local_now.replace(day=1)
 
@@ -121,7 +120,7 @@ tab_budget, tab_transactions = st.tabs(["📊 Budget", "💳 Transactions"])
 # 📊 VIEW 1: THE BUDGET TAB
 # ==========================================
 with tab_budget:
-    # --- THE NEW STATE CONTROLLER (TOGGLE) ---
+    # THE STATE CONTROLLER (TOGGLE)
     budget_view = st.radio("Budget View", ["Planned", "Spent", "Remaining"], horizontal=True, label_visibility="collapsed")
     
     total_planned_income = income_df['Planned_Amount'].astype(float).sum() if not income_df.empty else 0.0
@@ -129,17 +128,19 @@ with tab_budget:
     total_spent = expense_df['Amount'].astype(float).sum() if not expense_df.empty else 0.0
     remaining = total_planned_income - total_spent
     
-    col1, col2 = st.columns(2)
-    col1.metric("Remaining to Assign", f"${remaining:,.2f}")
-    col2.metric("Total Spent", f"${total_spent:,.2f}")
+    # --- UPGRADED 3-COLUMN METRICS DASHBOARD ---
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Planned Income", f"${total_planned_income:,.2f}")
+    col2.metric("Left to Assign", f"${remaining:,.2f}")
+    col3.metric("Total Spent", f"${total_spent:,.2f}")
     
     st.write("") 
     
+    # THE INCOME SECTION
     col_title, col_planned = st.columns([3, 1])
     with col_title:
         st.markdown("<h5 style='color: gray; margin-bottom: 0px;'>Income</h5>", unsafe_allow_html=True)
     with col_planned:
-        # The right-hand column header now changes based on your toggle click!
         st.markdown(f"<p style='color: gray; text-align: right; margin-bottom: 0px;'>{budget_view}</p>", unsafe_allow_html=True)
     
     st.markdown("<hr style='margin-top: 5px; margin-bottom: 10px;'>", unsafe_allow_html=True)
@@ -147,21 +148,18 @@ with tab_budget:
     if not income_df.empty:
         for index, row in income_df.iterrows():
             
-            # 1. Grab the goal amount
             planned_amt = float(row['Planned_Amount'])
             
-            # 2. Search history for actuals
             if not filtered_df.empty:
                 cat_spent = filtered_df[(filtered_df['Category'] == row['Category']) & (filtered_df['Type'] == 'Income')]['Amount'].astype(float).sum()
             else:
                 cat_spent = 0.0
             
-            # 3. Apply the Toggle Logic
             if budget_view == "Planned":
                 display_amt = planned_amt
             elif budget_view == "Spent":
                 display_amt = cat_spent
-            else: # Remaining
+            else: 
                 display_amt = planned_amt - cat_spent
 
             col_name, col_amt = st.columns([3, 1])
