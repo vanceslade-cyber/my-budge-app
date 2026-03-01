@@ -42,7 +42,10 @@ def transaction_modal():
         tx_type = st.radio("Type", ["- Expense", "+ Income"], horizontal=True, label_visibility="collapsed")
         st.divider()
         
-        t_date = st.date_input("Date", value=datetime.date.today())
+        # Grabs the current time specifically in the Edmonton/Mountain time zone
+local_now = datetime.datetime.now(ZoneInfo("America/Edmonton")).date()
+
+t_date = st.date_input("Date", value=local_now)
         t_amt = st.number_input("Amount ($)", min_value=0.00, value=0.00, step=0.01)
         t_merch = st.text_input("Merchant", placeholder="Enter Name")
         t_cat = st.selectbox("Budget Item(s)", ["Select >", "Tots Bucks", "Housing", "Food", "Soccer", "Auto", "Savings", "Other"])
