@@ -169,7 +169,6 @@ with tab_budget:
         for index, row in income_df.iterrows():
             planned_amt = float(row['Planned_Amount'])
             
-            # BROKEN DOWN PANDAS LOGIC TO PREVENT WORD-WRAP ERRORS
             if not filtered_df.empty:
                 is_cat = filtered_df['Category'] == row['Category']
                 is_inc = filtered_df['Type'] == 'Income'
@@ -177,4 +176,12 @@ with tab_budget:
             else:
                 cat_spent = 0.0
             
-            if budget_view ==
+            # VERTICALLY EXPANDED LOGIC TO PREVENT WORD-WRAP ERRORS
+            if budget_view == "Planned":
+                display_amt = planned_amt
+            elif budget_view == "Spent":
+                display_amt = cat_spent
+            else:
+                display_amt = planned_amt - cat_spent
+
+            st.markdown(
