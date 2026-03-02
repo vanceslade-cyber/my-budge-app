@@ -155,15 +155,8 @@ with tab_budget:
     st.write("") 
     
     # --- 1. THE INCOME SECTION ---
-    st.markdown(
-        f"""
-        <div style='display: flex; justify-content: space-between; align-items: flex-end;'>
-            <h5 style='color: gray; margin-bottom: 0px;'>Income</h5>
-            <span style='color: gray; margin-bottom: 0px;'>{budget_view}</span>
-        </div>
-        <hr style='margin-top: 5px; margin-bottom: 10px;'>
-        """, unsafe_allow_html=True
-    )
+    inc_header = f"<div style='display: flex; justify-content: space-between; align-items: flex-end;'><h5 style='color: gray; margin-bottom: 0px;'>Income</h5><span style='color: gray; margin-bottom: 0px;'>{budget_view}</span></div><hr style='margin-top: 5px; margin-bottom: 10px;'>"
+    st.markdown(inc_header, unsafe_allow_html=True)
     
     if not income_df.empty:
         for index, row in income_df.iterrows():
@@ -176,12 +169,109 @@ with tab_budget:
             else:
                 cat_spent = 0.0
             
-            # VERTICALLY EXPANDED LOGIC TO PREVENT WORD-WRAP ERRORS
-            if budget_view == "Planned":
-                display_amt = planned_amt
-            elif budget_view == "Spent":
-                display_amt = cat_spent
-            else:
-                display_amt = planned_amt - cat_spent
+            if budget_view == "Planned": display_amt = planned_amt
+            elif budget_view == "Spent": display_amt = cat_spent
+            else: display_amt = planned_amt - cat_spent
 
-            st.markdown(
+            inc_row = f"<div style='display: flex; justify-content: space-between; align-items: center;'><span>{row['Category']}</span><span>${display_amt:,.2f}</span></div><hr style='margin-top: 5px; margin-bottom: 10px; border-top: 1px solid #e6e6e6;'>"
+            st.markdown(inc_row, unsafe_allow_html=True)
+    
+    if st.button("Add Income", type="tertiary"):
+        add_income_modal()
+
+    st.write("") 
+    st.write("") 
+
+    # --- 2. THE DYNAMIC EXPENSE SECTIONS (Debt included) ---
+    expense_groups = ["Giving", "Savings", "Housing", "Transportation", "Food", "Subscriptions", "Lifestyle", "Health", "Insurance", "Debt"]
+    
+    for group in expense_groups:
+        group_df = month_plan_df[month_plan_df['Type'] == group] if not month_plan_df.empty else pd.DataFrame()
+        
+        exp_header = f"<div style='display: flex; justify-content: space-between; align-items: flex-end;'><h5 style='color: gray; margin-bottom: 0px;'>{group}</h5><span style='color: gray; margin-bottom: 0px;'>{budget_view}</span></div><hr style='margin-top: 5px; margin-bottom: 10px;'>"
+        st.markdown(exp_header, unsafe_allow_html=True)
+        
+        if not group_df.empty:
+            for index, row in group_df.iterrows():
+                planned_amt = float(row['Planned_Amount'])
+                
+                if not filtered_df.empty:
+                    is_cat = filtered_df['Category'] == row['Category']
+                    is_exp = filtered_df['Type'] == 'Expense'
+                    cat_spent = filtered_df[is_cat & is_exp]['Amount'].astype(float).sum()
+                else:
+                    cat_spent = 0.0
+                
+                if budget_view == "Planned": display_amt = planned_amt
+                elif budget_view == "Spent": display_amt = cat_spent
+                else: display_amt = planned_amt - cat_spent
+
+                exp_row = f"<div style='display: flex; justify-content: space-between; align-items: center;'><span>{row['Category']}</span><span>${display_amt:,.2f}</span></div><hr style='margin-top: 5px; margin-bottom: 10px; border-top: 1px solid #e6e6e6;'>"
+                st.markdown(exp_row, unsafe_allow_html=True)
+        
+        if st.button(f"Add {group}", type="tertiary", key=f"btn_{group}"):
+            add_planned_item_modal(group)
+            
+        st.write("")
+
+# ==========================================
+# 💳 VIEW 2: THE TRANSACTIONS TAB
+# ==========================================
+with tab_transactions:
+    st.subheader(f"History for {current_month_str}")
+    
+    if not filtered_df.empty:
+        display_df = filtered_df.copy()
+        display_df['Date'] = display_df['Date'].dt.strftime('%Y-%m-%d')
+        
+        def style_rows(row):
+            if 'Type' in row and row['Type'] == 'Income':
+                return ['color: #1a8b4c'] * len(row) 
+            else:
+                return [''] * len(row)
+
+        styled_df = display_df.iloc[::-1].head(10).style.apply(style_rows, axis=1)
+        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    else:
+        st.write("No transactions logged for this month yet.")
+
+# ==========================================
+# ⚙️ VIEW 3: THE MANAGE TAB
+# ==========================================
+with tab_manage:
+    st.info("💡 **How to use:** Double-click any cell to edit it. To delete an item, click the checkbox on the far left of its row, then click the trash can icon at the top right of the table.")
+    
+    st.subheader(f"Edit {current_month_str} Plan")
+    plan_mask = plan_df['Month'] == current_month_key
+    current_plan_view = plan_df[plan_mask].reset_index(drop=True)
+    
+    edited_plan = st.data_editor(current_plan_view, num_rows="dynamic", use_container_width=True)
+    
+    if st.button("💾 Save Plan Changes", type="primary", use_container_width=True):
+        plan_remaining = plan_df[~plan_mask]
+        updated_master_plan = pd.concat([plan_remaining, edited_plan], ignore_index=True)
+        try:
+            conn.update(worksheet="Plan", data=updated_master_plan)
+            st.success("✅ Plan Updated Permanently!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error saving: {e}")
+
+    st.divider()
+
+    st.subheader(f"Edit {current_month_str} Transactions")
+    temp_dates = pd.to_datetime(df['Date'], errors='coerce')
+    tx_mask = (temp_dates.dt.month == st.session_state.view_date.month) & (temp_dates.dt.year == st.session_state.view_date.year)
+    current_tx_view = df[tx_mask].reset_index(drop=True)
+    
+    edited_tx = st.data_editor(current_tx_view, num_rows="dynamic", use_container_width=True)
+    
+    if st.button("💾 Save Transaction Changes", type="primary", use_container_width=True):
+        tx_remaining = df[~tx_mask]
+        updated_master_tx = pd.concat([tx_remaining, edited_tx], ignore_index=True)
+        try:
+            conn.update(worksheet="Sheet1", data=updated_master_tx)
+            st.success("✅ Transactions Updated Permanently!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error saving: {e}")
