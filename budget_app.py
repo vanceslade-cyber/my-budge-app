@@ -35,6 +35,20 @@ except Exception as e:
     st.error(f"Plan handshake failed. Error: {e}")
     plan_df = pd.DataFrame(columns=["Month", "Type", "Category", "Planned_Amount"])
 
+# --- DATA FILTERING (Moved up so the Modals can use it!) ---
+current_month_str = st.session_state.view_date.strftime("%B %Y")
+current_month_key = st.session_state.view_date.strftime("%Y-%m")
+
+filtered_df = df.copy()
+if not filtered_df.empty:
+    filtered_df['Date'] = pd.to_datetime(filtered_df['Date'], errors='coerce')
+    mask = (filtered_df['Date'].dt.month == st.session_state.view_date.month) & \
+           (filtered_df['Date'].dt.year == st.session_state.view_date.year)
+    filtered_df = filtered_df[mask]
+
+month_plan_df = plan_df[plan_df['Month'] == current_month_key] if not plan_df.empty else pd.DataFrame()
+income_df = month_plan_df[month_plan_df['Type'] == 'Income'] if not month_plan_df.empty else pd.DataFrame()
+
 # --- MODALS (Pop-ups) ---
 @st.dialog("➕ Add Transaction")
 def transaction_modal():
@@ -44,10 +58,12 @@ def transaction_modal():
         
         local_now = datetime.datetime.now(ZoneInfo("America/Edmonton")).date()
         t_date = st.date_input("Date", value=local_now)
-        
         t_amt = st.number_input("Amount ($)", min_value=0.00, value=0.00, step=0.01)
         t_merch = st.text_input("Merchant", placeholder="Enter Name")
-        t_cat = st.selectbox("Budget Item(s)", ["Select >", "Tots Bucks", "Mo Tithe 10%", "Housing", "Food", "Soccer", "Auto", "Savings", "Other"])
+        
+        # DYNAMIC DROPDOWN: Automatically pulls your planned items!
+        planned_items = month_plan_df['Category'].dropna().unique().tolist() if not month_plan_df.empty else []
+        t_cat = st.selectbox("Budget Item(s)", ["Select >"] + planned_items + ["Other"])
 
         st.divider()
         if st.form_submit_button("Securely Sync Transaction", use_container_width=True):
@@ -72,7 +88,6 @@ def add_income_modal():
         
         if st.form_submit_button("Save Income", use_container_width=True):
             if i_name and i_amt > 0:
-                current_month_key = st.session_state.view_date.strftime("%Y-%m")
                 new_plan = pd.DataFrame([[current_month_key, "Income", i_name, i_amt]], columns=["Month", "Type", "Category", "Planned_Amount"])
                 try:
                     updated_plan = pd.concat([plan_df, new_plan], ignore_index=True)
@@ -84,41 +99,26 @@ def add_income_modal():
             else:
                 st.warning("Please enter a name and amount.")
 
-@st.dialog("❤️ Add Giving")
-def add_giving_modal():
-    with st.form("giving_form", clear_on_submit=True):
-        g_name = st.text_input("Giving Name", placeholder="e.g., Mo Tithe 10%")
-        g_amt = st.number_input("Planned Amount ($)", min_value=0.00, step=10.00)
+# UNIVERSAL EXPENSE MODAL
+@st.dialog("➕ Add Planned Item")
+def add_planned_item_modal(section_name):
+    with st.form(f"form_{section_name}", clear_on_submit=True):
+        st.markdown(f"Add new item to **{section_name}**")
+        i_name = st.text_input("Item Name", placeholder="e.g., Groceries, Rent, Fuel")
+        i_amt = st.number_input("Planned Amount ($)", min_value=0.00, step=10.00)
         
-        if st.form_submit_button("Save Giving", use_container_width=True):
-            if g_name and g_amt > 0:
-                current_month_key = st.session_state.view_date.strftime("%Y-%m")
-                new_plan = pd.DataFrame([[current_month_key, "Giving", g_name, g_amt]], columns=["Month", "Type", "Category", "Planned_Amount"])
+        if st.form_submit_button("Save Item", use_container_width=True):
+            if i_name and i_amt > 0:
+                new_plan = pd.DataFrame([[current_month_key, section_name, i_name, i_amt]], columns=["Month", "Type", "Category", "Planned_Amount"])
                 try:
                     updated_plan = pd.concat([plan_df, new_plan], ignore_index=True)
                     conn.update(worksheet="Plan", data=updated_plan)
-                    st.success("✅ Giving Added!")
+                    st.success(f"✅ Added to {section_name}!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"Write unauthorized. Error: {e}")
             else:
                 st.warning("Please enter a name and amount.")
-
-# --- DATA FILTERING ---
-current_month_str = st.session_state.view_date.strftime("%B %Y")
-current_month_key = st.session_state.view_date.strftime("%Y-%m")
-
-filtered_df = df.copy()
-if not filtered_df.empty:
-    filtered_df['Date'] = pd.to_datetime(filtered_df['Date'], errors='coerce')
-    mask = (filtered_df['Date'].dt.month == st.session_state.view_date.month) & \
-           (filtered_df['Date'].dt.year == st.session_state.view_date.year)
-    filtered_df = filtered_df[mask]
-
-month_plan_df = plan_df[plan_df['Month'] == current_month_key] if not plan_df.empty else pd.DataFrame()
-
-income_df = month_plan_df[month_plan_df['Type'] == 'Income'] if not month_plan_df.empty else pd.DataFrame()
-giving_df = month_plan_df[month_plan_df['Type'] == 'Giving'] if not month_plan_df.empty else pd.DataFrame()
 
 # --- APP HEADER ---
 st.title("💰 Budget Manager")
@@ -156,8 +156,7 @@ with tab_budget:
     
     st.write("") 
     
-    # --- 1. THE INCOME SECTION ---
-    # Using Flexbox for the section header
+    # --- 1. THE INCOME SECTION (Handled Separately because it adds money) ---
     st.markdown(
         f"""
         <div style='display: flex; justify-content: space-between; align-items: flex-end;'>
@@ -165,27 +164,18 @@ with tab_budget:
             <span style='color: gray; margin-bottom: 0px;'>{budget_view}</span>
         </div>
         <hr style='margin-top: 5px; margin-bottom: 10px;'>
-        """, 
-        unsafe_allow_html=True
+        """, unsafe_allow_html=True
     )
     
     if not income_df.empty:
         for index, row in income_df.iterrows():
             planned_amt = float(row['Planned_Amount'])
+            cat_spent = filtered_df[(filtered_df['Category'] == row['Category']) & (filtered_df['Type'] == 'Income')]['Amount'].astype(float).sum() if not filtered_df.empty else 0.0
             
-            if not filtered_df.empty:
-                cat_spent = filtered_df[(filtered_df['Category'] == row['Category']) & (filtered_df['Type'] == 'Income')]['Amount'].astype(float).sum()
-            else:
-                cat_spent = 0.0
-            
-            if budget_view == "Planned":
-                display_amt = planned_amt
-            elif budget_view == "Spent":
-                display_amt = cat_spent
-            else: 
-                display_amt = planned_amt - cat_spent
+            if budget_view == "Planned": display_amt = planned_amt
+            elif budget_view == "Spent": display_amt = cat_spent
+            else: display_amt = planned_amt - cat_spent
 
-            # Using Flexbox for the line item
             st.markdown(
                 f"""
                 <div style='display: flex; justify-content: space-between; align-items: center;'>
@@ -193,8 +183,7 @@ with tab_budget:
                     <span>${display_amt:,.2f}</span>
                 </div>
                 <hr style='margin-top: 5px; margin-bottom: 10px; border-top: 1px solid #e6e6e6;'>
-                """, 
-                unsafe_allow_html=True
+                """, unsafe_allow_html=True
             )
     
     if st.button("Add Income", type="tertiary"):
@@ -203,49 +192,49 @@ with tab_budget:
     st.write("") 
     st.write("") 
 
-    # --- 2. THE GIVING SECTION ---
-    # Using Flexbox for the section header
-    st.markdown(
-        f"""
-        <div style='display: flex; justify-content: space-between; align-items: flex-end;'>
-            <h5 style='color: gray; margin-bottom: 0px;'>Giving</h5>
-            <span style='color: gray; margin-bottom: 0px;'>{budget_view}</span>
-        </div>
-        <hr style='margin-top: 5px; margin-bottom: 10px;'>
-        """, 
-        unsafe_allow_html=True
-    )
+    # --- 2. THE DYNAMIC EXPENSE SECTIONS ---
+    expense_groups = ["Giving", "Savings", "Housing", "Transportation", "Food", "Subscriptions", "Lifestyle", "Health", "Insurance"]
     
-    if not giving_df.empty:
-        for index, row in giving_df.iterrows():
-            planned_amt = float(row['Planned_Amount'])
-            
-            if not filtered_df.empty:
-                cat_spent = filtered_df[(filtered_df['Category'] == row['Category']) & (filtered_df['Type'] == 'Expense')]['Amount'].astype(float).sum()
-            else:
-                cat_spent = 0.0
-            
-            if budget_view == "Planned":
-                display_amt = planned_amt
-            elif budget_view == "Spent":
-                display_amt = cat_spent
-            else: 
-                display_amt = planned_amt - cat_spent
+    for group in expense_groups:
+        # Filter the plan for just this specific group
+        group_df = month_plan_df[month_plan_df['Type'] == group] if not month_plan_df.empty else pd.DataFrame()
+        
+        st.markdown(
+            f"""
+            <div style='display: flex; justify-content: space-between; align-items: flex-end;'>
+                <h5 style='color: gray; margin-bottom: 0px;'>{group}</h5>
+                <span style='color: gray; margin-bottom: 0px;'>{budget_view}</span>
+            </div>
+            <hr style='margin-top: 5px; margin-bottom: 10px;'>
+            """, unsafe_allow_html=True
+        )
+        
+        if not group_df.empty:
+            for index, row in group_df.iterrows():
+                planned_amt = float(row['Planned_Amount'])
+                # Looks for Expenses that match this exact category name
+                cat_spent = filtered_df[(filtered_df['Category'] == row['Category']) & (filtered_df['Type'] == 'Expense')]['Amount'].astype(float).sum() if not filtered_df.empty else 0.0
+                
+                if budget_view == "Planned": display_amt = planned_amt
+                elif budget_view == "Spent": display_amt = cat_spent
+                else: display_amt = planned_amt - cat_spent
 
-            # Using Flexbox for the line item
-            st.markdown(
-                f"""
-                <div style='display: flex; justify-content: space-between; align-items: center;'>
-                    <span>{row['Category']}</span>
-                    <span>${display_amt:,.2f}</span>
-                </div>
-                <hr style='margin-top: 5px; margin-bottom: 10px; border-top: 1px solid #e6e6e6;'>
-                """, 
-                unsafe_allow_html=True
-            )
-    
-    if st.button("Add Giving", type="tertiary"):
-        add_giving_modal()
+                st.markdown(
+                    f"""
+                    <div style='display: flex; justify-content: space-between; align-items: center;'>
+                        <span>{row['Category']}</span>
+                        <span>${display_amt:,.2f}</span>
+                    </div>
+                    <hr style='margin-top: 5px; margin-bottom: 10px; border-top: 1px solid #e6e6e6;'>
+                    """, unsafe_allow_html=True
+                )
+        
+        # Unique button key is required by Streamlit inside loops
+        if st.button(f"Add {group}", type="tertiary", key=f"btn_{group}"):
+            add_planned_item_modal(group)
+            
+        st.write("")
+        st.write("")
 
 # ==========================================
 # 💳 VIEW 2: THE TRANSACTIONS TAB
