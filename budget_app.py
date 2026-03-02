@@ -168,45 +168,13 @@ with tab_budget:
     if not income_df.empty:
         for index, row in income_df.iterrows():
             planned_amt = float(row['Planned_Amount'])
-            cat_spent = filtered_df[(filtered_df['Category'] == row['Category']) & (filtered_df['Type'] == 'Income')]['Amount'].astype(float).sum() if not filtered_df.empty else 0.0
             
-            if budget_view == "Planned": display_amt = planned_amt
-            elif budget_view == "Spent": display_amt = cat_spent
-            else: display_amt = planned_amt - cat_spent
-
-            st.markdown(
-                f"""
-                <div style='display: flex; justify-content: space-between; align-items: center;'>
-                    <span>{row['Category']}</span>
-                    <span>${display_amt:,.2f}</span>
-                </div>
-                <hr style='margin-top: 5px; margin-bottom: 10px; border-top: 1px solid #e6e6e6;'>
-                """, unsafe_allow_html=True
-            )
-    
-    if st.button("Add Income", type="tertiary"):
-        add_income_modal()
-
-    st.write("") 
-    st.write("") 
-
-    # --- 2. THE DYNAMIC EXPENSE SECTIONS (Debt added here!) ---
-    expense_groups = ["Giving", "Savings", "Housing", "Transportation", "Food", "Subscriptions", "Lifestyle", "Health", "Insurance", "Debt"]
-    
-    for group in expense_groups:
-        group_df = month_plan_df[month_plan_df['Type'] == group] if not month_plan_df.empty else pd.DataFrame()
-        
-        st.markdown(
-            f"""
-            <div style='display: flex; justify-content: space-between; align-items: flex-end;'>
-                <h5 style='color: gray; margin-bottom: 0px;'>{group}</h5>
-                <span style='color: gray; margin-bottom: 0px;'>{budget_view}</span>
-            </div>
-            <hr style='margin-top: 5px; margin-bottom: 10px;'>
-            """, unsafe_allow_html=True
-        )
-        
-        if not group_df.empty:
-            for index, row in group_df.iterrows():
-                planned_amt = float(row['Planned_Amount'])
-                cat_spent = filtered_df[(filtered_df['Category'] ==
+            # BROKEN DOWN PANDAS LOGIC TO PREVENT WORD-WRAP ERRORS
+            if not filtered_df.empty:
+                is_cat = filtered_df['Category'] == row['Category']
+                is_inc = filtered_df['Type'] == 'Income'
+                cat_spent = filtered_df[is_cat & is_inc]['Amount'].astype(float).sum()
+            else:
+                cat_spent = 0.0
+            
+            if budget_view ==
