@@ -17,13 +17,12 @@ def change_month(months_to_add):
     new_month = new_month % 12 + 1
     st.session_state.view_date = datetime.date(new_year, new_month, 1)
 
-# --- DATABASE CONNECTION ---
+# --- DATABASE CONNECTION & UPGRADED SCHEMA ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 try:
     df = conn.read(worksheet="Sheet1", ttl=0)
-    if 'Type' not in df.columns:
-        df['Type'] = 'Expense'
+    if 'Type' not in df.columns: df['Type'] = 'Expense'
     df['Type'] = df['Type'].fillna('Expense')
 except Exception as e:
     st.error(f"Transaction handshake failed. Error: {e}")
@@ -31,9 +30,19 @@ except Exception as e:
 
 try:
     plan_df = conn.read(worksheet="Plan", ttl=0)
+    # ADDING NEW COLUMNS FOR FUNDS & DUE DATES IF MISSING
+    if 'Due_Date' not in plan_df.columns: plan_df['Due_Date'] = ""
+    if 'Is_Fund' not in plan_df.columns: plan_df['Is_Fund'] = False
+    if 'Current_Balance' not in plan_df.columns: plan_df['Current_Balance'] = 0.0
+    if 'Target_Balance' not in plan_df.columns: plan_df['Target_Balance'] = 0.0
+
+    plan_df['Due_Date'] = plan_df['Due_Date'].fillna("")
+    plan_df['Is_Fund'] = plan_df['Is_Fund'].fillna(False)
+    plan_df['Current_Balance'] = pd.to_numeric(plan_df['Current_Balance'], errors='coerce').fillna(0.0)
+    plan_df['Target_Balance'] = pd.to_numeric(plan_df['Target_Balance'], errors='coerce').fillna(0.0)
 except Exception as e:
     st.error(f"Plan handshake failed. Error: {e}")
-    plan_df = pd.DataFrame(columns=["Month", "Type", "Category", "Planned_Amount"])
+    plan_df = pd.DataFrame(columns=["Month", "Type", "Category", "Planned_Amount", "Due_Date", "Is_Fund", "Current_Balance", "Target_Balance"])
 
 # --- DATA FILTERING ---
 current_month_str = st.session_state.view_date.strftime("%B %Y")
@@ -49,7 +58,77 @@ if not filtered_df.empty:
 month_plan_df = plan_df[plan_df['Month'] == current_month_key] if not plan_df.empty else pd.DataFrame()
 income_df = month_plan_df[month_plan_df['Type'] == 'Income'] if not month_plan_df.empty else pd.DataFrame()
 
-# --- MODALS (Pop-ups) ---
+# --- THE NEW ITEM DETAILS MODAL ---
+@st.dialog("📋 Item Details")
+def item_details_modal(category_name, category_type, current_m_key):
+    # Find the exact row in the database
+    mask = (plan_df['Month'] == current_m_key) & (plan_df['Category'] == category_name)
+    if not plan_df[mask].empty:
+        row_idx = plan_df[mask].index[0]
+        current_plan_row = plan_df.loc[row_idx]
+    else:
+        st.error("Item not found.")
+        return
+
+    st.subheader(category_name)
+
+    # 1. Transaction History (Activity)
+    st.markdown("**Activity This Month**")
+    item_tx = filtered_df[filtered_df['Category'] == category_name]
+    if not item_tx.empty:
+        display_tx = item_tx[['Date', 'Merchant', 'Amount']].copy()
+        display_tx['Date'] = display_tx['Date'].dt.strftime('%b %d')
+        st.dataframe(display_tx, hide_index=True, use_container_width=True)
+    else:
+        st.caption(f"No transactions logged for {category_name} this month.")
+
+    st.divider()
+
+    # 2. Due Date
+    existing_due = current_plan_row.get('Due_Date', "")
+    parsed_due = None
+    if pd.notna(existing_due) and str(existing_due).strip():
+        try: parsed_due = datetime.datetime.strptime(str(existing_due)[:10], "%Y-%m-%d").date()
+        except: pass
+    
+    st.markdown("**📅 Schedule**")
+    d_date = st.date_input("Due Date", value=parsed_due)
+
+    # 3. Fund Settings (Only shows if it is in the Savings category)
+    make_fund = False
+    c_bal = 0.0
+    t_bal = 0.0
+    
+    if category_type == "Savings":
+        st.divider()
+        st.markdown("**🐖 Fund**")
+        is_fund = bool(current_plan_row.get('Is_Fund', False))
+        
+        make_fund = st.toggle("Make Fund", value=is_fund)
+        if make_fund:
+            st.info("Balances carry over month to month.")
+            c_bal = float(current_plan_row.get('Current_Balance', 0.0))
+            t_bal = float(current_plan_row.get('Target_Balance', 0.0))
+            c_bal = st.number_input("Current Balance ($)", value=c_bal, min_value=0.0, step=10.0)
+            t_bal = st.number_input("Target Amount ($)", value=t_bal, min_value=0.0, step=10.0)
+
+    # Save button
+    st.divider()
+    if st.button("💾 Save Item Settings", type="primary", use_container_width=True):
+        plan_df.at[row_idx, 'Due_Date'] = str(d_date) if d_date else ""
+        if category_type == "Savings":
+            plan_df.at[row_idx, 'Is_Fund'] = make_fund
+            plan_df.at[row_idx, 'Current_Balance'] = float(c_bal)
+            plan_df.at[row_idx, 'Target_Balance'] = float(t_bal)
+
+        try:
+            conn.update(worksheet="Plan", data=plan_df)
+            st.success("✅ Settings Saved!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error saving: {e}")
+
+# --- ADD ITEM MODALS ---
 @st.dialog("➕ Add Transaction")
 def transaction_modal():
     with st.form("entry_form", clear_on_submit=True):
@@ -87,7 +166,7 @@ def add_income_modal():
         
         if st.form_submit_button("Save Income", use_container_width=True):
             if i_name and i_amt >= 0:
-                new_plan = pd.DataFrame([[current_month_key, "Income", i_name, i_amt]], columns=["Month", "Type", "Category", "Planned_Amount"])
+                new_plan = pd.DataFrame([[current_month_key, "Income", i_name, i_amt, "", False, 0.0, 0.0]], columns=plan_df.columns)
                 try:
                     updated_plan = pd.concat([plan_df, new_plan], ignore_index=True)
                     conn.update(worksheet="Plan", data=updated_plan)
@@ -107,7 +186,7 @@ def add_planned_item_modal(section_name):
         
         if st.form_submit_button("Save Item", use_container_width=True):
             if i_name and i_amt >= 0:
-                new_plan = pd.DataFrame([[current_month_key, section_name, i_name, i_amt]], columns=["Month", "Type", "Category", "Planned_Amount"])
+                new_plan = pd.DataFrame([[current_month_key, section_name, i_name, i_amt, "", False, 0.0, 0.0]], columns=plan_df.columns)
                 try:
                     updated_plan = pd.concat([plan_df, new_plan], ignore_index=True)
                     conn.update(worksheet="Plan", data=updated_plan)
@@ -117,6 +196,31 @@ def add_planned_item_modal(section_name):
                     st.error(f"Write unauthorized. Error: {e}")
             else:
                 st.warning("Please enter a name and amount.")
+
+# --- HELPER FUNCTION: Renders Interactive Rows ---
+def render_budget_row(row, group_name, budget_view_state, filtered_tx_df, current_m_key):
+    planned_amt = float(row['Planned_Amount'])
+    
+    if not filtered_tx_df.empty:
+        is_cat = filtered_tx_df['Category'] == row['Category']
+        is_type = filtered_tx_df['Type'] == ('Income' if group_name == 'Income' else 'Expense')
+        cat_spent = filtered_tx_df[is_cat & is_type]['Amount'].astype(float).sum()
+    else:
+        cat_spent = 0.0
+    
+    if budget_view_state == "Planned": display_amt = planned_amt
+    elif budget_view_state == "Spent": display_amt = cat_spent
+    else: display_amt = planned_amt - cat_spent
+
+    # This creates the clickable rows!
+    col_name, col_amt = st.columns([3, 1], vertical_alignment="center")
+    with col_name:
+        if st.button(f"📝 {row['Category']}", type="tertiary", key=f"btn_details_{row['Category']}_{current_m_key}"):
+            item_details_modal(row['Category'], group_name, current_m_key)
+    with col_amt:
+        st.markdown(f"<div style='text-align: right;'>${display_amt:,.2f}</div>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin-top: 0px; margin-bottom: 5px; border-top: 1px solid #e6e6e6;'>", unsafe_allow_html=True)
+
 
 # --- APP HEADER ---
 st.title("💰 Budget Manager")
@@ -155,26 +259,19 @@ with tab_budget:
     st.write("") 
     
     # --- 1. THE INCOME SECTION ---
-    inc_header = f"<div style='display: flex; justify-content: space-between; align-items: flex-end;'><h5 style='color: gray; margin-bottom: 0px;'>Income</h5><span style='color: gray; margin-bottom: 0px;'>{budget_view}</span></div><hr style='margin-top: 5px; margin-bottom: 10px;'>"
-    st.markdown(inc_header, unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div style='display: flex; justify-content: space-between; align-items: flex-end;'>
+            <h5 style='color: gray; margin-bottom: 0px;'>Income</h5>
+            <span style='color: gray; margin-bottom: 0px;'>{budget_view}</span>
+        </div>
+        <hr style='margin-top: 5px; margin-bottom: 10px;'>
+        """, unsafe_allow_html=True
+    )
     
     if not income_df.empty:
         for index, row in income_df.iterrows():
-            planned_amt = float(row['Planned_Amount'])
-            
-            if not filtered_df.empty:
-                is_cat = filtered_df['Category'] == row['Category']
-                is_inc = filtered_df['Type'] == 'Income'
-                cat_spent = filtered_df[is_cat & is_inc]['Amount'].astype(float).sum()
-            else:
-                cat_spent = 0.0
-            
-            if budget_view == "Planned": display_amt = planned_amt
-            elif budget_view == "Spent": display_amt = cat_spent
-            else: display_amt = planned_amt - cat_spent
-
-            inc_row = f"<div style='display: flex; justify-content: space-between; align-items: center;'><span>{row['Category']}</span><span>${display_amt:,.2f}</span></div><hr style='margin-top: 5px; margin-bottom: 10px; border-top: 1px solid #e6e6e6;'>"
-            st.markdown(inc_row, unsafe_allow_html=True)
+            render_budget_row(row, "Income", budget_view, filtered_df, current_month_key)
     
     if st.button("Add Income", type="tertiary"):
         add_income_modal()
@@ -182,34 +279,27 @@ with tab_budget:
     st.write("") 
     st.write("") 
 
-    # --- 2. THE DYNAMIC EXPENSE SECTIONS (Debt included) ---
+    # --- 2. THE DYNAMIC EXPENSE SECTIONS ---
     expense_groups = ["Giving", "Savings", "Housing", "Transportation", "Food", "Subscriptions", "Lifestyle", "Health", "Insurance", "Debt"]
     
     for group in expense_groups:
         group_df = month_plan_df[month_plan_df['Type'] == group] if not month_plan_df.empty else pd.DataFrame()
         
-        exp_header = f"<div style='display: flex; justify-content: space-between; align-items: flex-end;'><h5 style='color: gray; margin-bottom: 0px;'>{group}</h5><span style='color: gray; margin-bottom: 0px;'>{budget_view}</span></div><hr style='margin-top: 5px; margin-bottom: 10px;'>"
-        st.markdown(exp_header, unsafe_allow_html=True)
+        st.markdown(
+            f"""
+            <div style='display: flex; justify-content: space-between; align-items: flex-end;'>
+                <h5 style='color: gray; margin-bottom: 0px;'>{group}</h5>
+                <span style='color: gray; margin-bottom: 0px;'>{budget_view}</span>
+            </div>
+            <hr style='margin-top: 5px; margin-bottom: 10px;'>
+            """, unsafe_allow_html=True
+        )
         
         if not group_df.empty:
             for index, row in group_df.iterrows():
-                planned_amt = float(row['Planned_Amount'])
-                
-                if not filtered_df.empty:
-                    is_cat = filtered_df['Category'] == row['Category']
-                    is_exp = filtered_df['Type'] == 'Expense'
-                    cat_spent = filtered_df[is_cat & is_exp]['Amount'].astype(float).sum()
-                else:
-                    cat_spent = 0.0
-                
-                if budget_view == "Planned": display_amt = planned_amt
-                elif budget_view == "Spent": display_amt = cat_spent
-                else: display_amt = planned_amt - cat_spent
-
-                exp_row = f"<div style='display: flex; justify-content: space-between; align-items: center;'><span>{row['Category']}</span><span>${display_amt:,.2f}</span></div><hr style='margin-top: 5px; margin-bottom: 10px; border-top: 1px solid #e6e6e6;'>"
-                st.markdown(exp_row, unsafe_allow_html=True)
+                render_budget_row(row, group, budget_view, filtered_df, current_month_key)
         
-        if st.button(f"Add {group}", type="tertiary", key=f"btn_{group}"):
+        if st.button(f"Add {group}", type="tertiary", key=f"btn_add_{group}"):
             add_planned_item_modal(group)
             
         st.write("")
@@ -225,10 +315,8 @@ with tab_transactions:
         display_df['Date'] = display_df['Date'].dt.strftime('%Y-%m-%d')
         
         def style_rows(row):
-            if 'Type' in row and row['Type'] == 'Income':
-                return ['color: #1a8b4c'] * len(row) 
-            else:
-                return [''] * len(row)
+            if 'Type' in row and row['Type'] == 'Income': return ['color: #1a8b4c'] * len(row) 
+            else: return [''] * len(row)
 
         styled_df = display_df.iloc[::-1].head(10).style.apply(style_rows, axis=1)
         st.dataframe(styled_df, use_container_width=True, hide_index=True)
