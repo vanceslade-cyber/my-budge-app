@@ -23,10 +23,15 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 try:
     df = conn.read(worksheet="Sheet1", ttl=0)
     if 'Type' not in df.columns: df['Type'] = 'Expense'
+    # NEW: Safely add the Description column if it doesn't exist yet
+    if 'Description' not in df.columns: df['Description'] = ""
+    
     df['Type'] = df['Type'].fillna('Expense')
+    df['Description'] = df['Description'].fillna("")
 except Exception as e:
     st.error(f"Transaction handshake failed. Error: {e}")
-    df = pd.DataFrame(columns=["Date", "Type", "Merchant", "Category", "Amount"])
+    # NEW: Updated fallback schema
+    df = pd.DataFrame(columns=["Date", "Type", "Merchant", "Category", "Amount", "Description"])
 
 try:
     plan_df = conn.read(worksheet="Plan", ttl=0)
@@ -73,7 +78,8 @@ def item_details_modal(category_name, category_type, current_m_key):
     st.markdown("**Activity This Month**")
     item_tx = filtered_df[filtered_df['Category'] == category_name]
     if not item_tx.empty:
-        display_tx = item_tx[['Date', 'Merchant', 'Amount']].copy()
+        # NEW: Added 'Description' to the view table
+        display_tx = item_tx[['Date', 'Merchant', 'Description', 'Amount']].copy()
         display_tx['Date'] = display_tx['Date'].dt.strftime('%b %d')
         st.dataframe(display_tx, hide_index=True, use_container_width=True)
     else:
@@ -135,7 +141,10 @@ def transaction_modal():
         local_now = datetime.datetime.now(ZoneInfo("America/Edmonton")).date()
         t_date = st.date_input("Date", value=local_now)
         t_amt = st.number_input("Amount ($)", min_value=0.00, value=0.00, step=0.01)
+        
         t_merch = st.text_input("Merchant", placeholder="Enter Name")
+        # NEW: Description field added here
+        t_desc = st.text_input("Description (Optional)", placeholder="e.g., Prescriptions, Groceries")
         
         planned_items = month_plan_df['Category'].dropna().unique().tolist() if not month_plan_df.empty else []
         t_cat = st.selectbox("Budget Item(s)", ["Select >"] + planned_items + ["Other"])
@@ -144,7 +153,8 @@ def transaction_modal():
         if st.form_submit_button("Securely Sync Transaction", use_container_width=True):
             if t_merch and t_amt >= 0 and t_cat != "Select >":
                 clean_type = tx_type.split(" ")[1] 
-                new_row = pd.DataFrame([[str(t_date), clean_type, t_merch, t_cat, t_amt]], columns=["Date", "Type", "Merchant", "Category", "Amount"])
+                # NEW: Included Description in the row upload
+                new_row = pd.DataFrame([[str(t_date), clean_type, t_merch, t_cat, t_amt, t_desc]], columns=["Date", "Type", "Merchant", "Category", "Amount", "Description"])
                 try:
                     updated_df = pd.concat([df, new_row], ignore_index=True)
                     conn.update(worksheet="Sheet1", data=updated_df)
@@ -215,7 +225,6 @@ def render_budget_row(row, group_name, budget_view_state, filtered_tx_df, curren
         spent_amt_to_display = cat_spent
         available_balance_to_display = planned_amt - cat_spent
 
-    # GHOST CATEGORY LOGIC: Reimbursables always show Total Spent!
     if group_name == "Reimbursable":
         display_amt = cat_spent
     else:
@@ -253,7 +262,7 @@ def render_budget_row(row, group_name, budget_view_state, filtered_tx_df, curren
     st.markdown("<hr style='margin-top: 0px; margin-bottom: 5px; border-top: 1px solid #e6e6e6;'>", unsafe_allow_html=True)
 
 
-# --- APP HEADER (Updated Title!) ---
+# --- APP HEADER ---
 st.title("💰 My Budget")
 col_left, col_mid, col_right, col_plus = st.columns([1, 3, 1, 1])
 with col_left:
@@ -277,12 +286,9 @@ tab_budget, tab_transactions, tab_manage = st.tabs(["📊 Budget", "💳 Transac
 with tab_budget:
     budget_view = st.radio("Budget View", ["Planned", "Spent", "Remaining"], horizontal=True, label_visibility="collapsed")
     
-    # 🚨 GHOST MATH ISOLATION: Finding items that belong to the Reimbursable group
     reimbursable_cats = month_plan_df[month_plan_df['Type'] == 'Reimbursable']['Category'].tolist() if not month_plan_df.empty else []
-    
     total_planned_income = income_df['Planned_Amount'].astype(float).sum() if not income_df.empty else 0.0
     
-    # 🚨 GHOST MATH ISOLATION: Filtering out Income AND any transaction tagged to a Reimbursable category
     if not filtered_df.empty:
         expense_df = filtered_df[(filtered_df['Type'] != 'Income') & (~filtered_df['Category'].isin(reimbursable_cats))]
     else:
@@ -298,7 +304,6 @@ with tab_budget:
     
     st.write("") 
     
-    # --- 1. THE INCOME SECTION ---
     inc_header_start = "<div style='display: flex; justify-content: space-between; align-items: flex-end;'>"
     inc_header_title = f"<h5 style='color: gray; margin-bottom: 0px;'>Income</h5>"
     inc_header_view = f"<span style='color: gray; margin-bottom: 0px;'>{budget_view}</span>"
@@ -317,7 +322,7 @@ with tab_budget:
     st.write("") 
     st.write("") 
 
-    # --- 2. THE DYNAMIC EXPENSE SECTIONS (With Reimbursable at the end!) ---
+    # --- 2. THE DYNAMIC EXPENSE SECTIONS ---
     expense_groups = ["Giving", "Savings", "Housing", "Transportation", "Food", "Subscriptions", "Lifestyle", "Health", "Insurance", "Debt", "Reimbursable"]
     
     for group in expense_groups:
@@ -326,7 +331,6 @@ with tab_budget:
         exp_header_start = "<div style='display: flex; justify-content: space-between; align-items: flex-end;'>"
         exp_header_title = f"<h5 style='color: gray; margin-bottom: 0px;'>{group}</h5>"
         
-        # Ghost Category UI Fix: Lock the text on the right so it doesn't change when toggling
         if group == "Reimbursable":
             exp_header_view = f"<span style='color: gray; margin-bottom: 0px;'>Total Spent</span>"
         else:
