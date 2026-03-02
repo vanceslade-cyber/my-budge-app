@@ -66,7 +66,6 @@ def transaction_modal():
 
         st.divider()
         if st.form_submit_button("Securely Sync Transaction", use_container_width=True):
-            # FIXED: Changed > 0 to >= 0 so you can enter $0.00
             if t_merch and t_amt >= 0 and t_cat != "Select >":
                 clean_type = tx_type.split(" ")[1] 
                 new_row = pd.DataFrame([[str(t_date), clean_type, t_merch, t_cat, t_amt]], columns=["Date", "Type", "Merchant", "Category", "Amount"])
@@ -87,7 +86,6 @@ def add_income_modal():
         i_amt = st.number_input("Planned Amount ($)", min_value=0.00, value=0.00, step=10.00)
         
         if st.form_submit_button("Save Income", use_container_width=True):
-            # FIXED: Changed > 0 to >= 0
             if i_name and i_amt >= 0:
                 new_plan = pd.DataFrame([[current_month_key, "Income", i_name, i_amt]], columns=["Month", "Type", "Category", "Planned_Amount"])
                 try:
@@ -108,7 +106,6 @@ def add_planned_item_modal(section_name):
         i_amt = st.number_input("Planned Amount ($)", min_value=0.00, value=0.00, step=10.00)
         
         if st.form_submit_button("Save Item", use_container_width=True):
-            # FIXED: Changed > 0 to >= 0
             if i_name and i_amt >= 0:
                 new_plan = pd.DataFrame([[current_month_key, section_name, i_name, i_amt]], columns=["Month", "Type", "Category", "Planned_Amount"])
                 try:
@@ -136,7 +133,7 @@ with col_plus:
 
 st.divider()
 
-# --- NAVIGATION TABS (Now with 'Manage' Tab!) ---
+# --- NAVIGATION TABS ---
 tab_budget, tab_transactions, tab_manage = st.tabs(["📊 Budget", "💳 Transactions", "⚙️ Manage"])
 
 # ==========================================
@@ -193,8 +190,8 @@ with tab_budget:
     st.write("") 
     st.write("") 
 
-    # --- 2. THE DYNAMIC EXPENSE SECTIONS ---
-    expense_groups = ["Giving", "Savings", "Housing", "Transportation", "Food", "Subscriptions", "Lifestyle", "Health", "Insurance"]
+    # --- 2. THE DYNAMIC EXPENSE SECTIONS (Debt added here!) ---
+    expense_groups = ["Giving", "Savings", "Housing", "Transportation", "Food", "Subscriptions", "Lifestyle", "Health", "Insurance", "Debt"]
     
     for group in expense_groups:
         group_df = month_plan_df[month_plan_df['Type'] == group] if not month_plan_df.empty else pd.DataFrame()
@@ -212,87 +209,4 @@ with tab_budget:
         if not group_df.empty:
             for index, row in group_df.iterrows():
                 planned_amt = float(row['Planned_Amount'])
-                cat_spent = filtered_df[(filtered_df['Category'] == row['Category']) & (filtered_df['Type'] == 'Expense')]['Amount'].astype(float).sum() if not filtered_df.empty else 0.0
-                
-                if budget_view == "Planned": display_amt = planned_amt
-                elif budget_view == "Spent": display_amt = cat_spent
-                else: display_amt = planned_amt - cat_spent
-
-                st.markdown(
-                    f"""
-                    <div style='display: flex; justify-content: space-between; align-items: center;'>
-                        <span>{row['Category']}</span>
-                        <span>${display_amt:,.2f}</span>
-                    </div>
-                    <hr style='margin-top: 5px; margin-bottom: 10px; border-top: 1px solid #e6e6e6;'>
-                    """, unsafe_allow_html=True
-                )
-        
-        if st.button(f"Add {group}", type="tertiary", key=f"btn_{group}"):
-            add_planned_item_modal(group)
-            
-        st.write("")
-
-# ==========================================
-# 💳 VIEW 2: THE TRANSACTIONS TAB
-# ==========================================
-with tab_transactions:
-    st.subheader(f"History for {current_month_str}")
-    
-    if not filtered_df.empty:
-        display_df = filtered_df.copy()
-        display_df['Date'] = display_df['Date'].dt.strftime('%Y-%m-%d')
-        
-        def style_rows(row):
-            if 'Type' in row and row['Type'] == 'Income':
-                return ['color: #1a8b4c'] * len(row) 
-            else:
-                return [''] * len(row)
-
-        styled_df = display_df.iloc[::-1].head(10).style.apply(style_rows, axis=1)
-        st.dataframe(styled_df, use_container_width=True, hide_index=True)
-    else:
-        st.write("No transactions logged for this month yet.")
-
-# ==========================================
-# ⚙️ VIEW 3: THE MANAGE TAB (Edit/Delete)
-# ==========================================
-with tab_manage:
-    st.info("💡 **How to use:** Double-click any cell to edit it. To delete an item, click the checkbox on the far left of its row, then click the trash can icon at the top right of the table.")
-    
-    st.subheader(f"Edit {current_month_str} Plan")
-    plan_mask = plan_df['Month'] == current_month_key
-    current_plan_view = plan_df[plan_mask].reset_index(drop=True)
-    
-    # Interactive Database Editor
-    edited_plan = st.data_editor(current_plan_view, num_rows="dynamic", use_container_width=True)
-    
-    if st.button("💾 Save Plan Changes", type="primary", use_container_width=True):
-        plan_remaining = plan_df[~plan_mask]
-        updated_master_plan = pd.concat([plan_remaining, edited_plan], ignore_index=True)
-        try:
-            conn.update(worksheet="Plan", data=updated_master_plan)
-            st.success("✅ Plan Updated Permanently!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Error saving: {e}")
-
-    st.divider()
-
-    st.subheader(f"Edit {current_month_str} Transactions")
-    temp_dates = pd.to_datetime(df['Date'], errors='coerce')
-    tx_mask = (temp_dates.dt.month == st.session_state.view_date.month) & (temp_dates.dt.year == st.session_state.view_date.year)
-    current_tx_view = df[tx_mask].reset_index(drop=True)
-    
-    # Interactive Database Editor
-    edited_tx = st.data_editor(current_tx_view, num_rows="dynamic", use_container_width=True)
-    
-    if st.button("💾 Save Transaction Changes", type="primary", use_container_width=True):
-        tx_remaining = df[~tx_mask]
-        updated_master_tx = pd.concat([tx_remaining, edited_tx], ignore_index=True)
-        try:
-            conn.update(worksheet="Sheet1", data=updated_master_tx)
-            st.success("✅ Transactions Updated Permanently!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Error saving: {e}")
+                cat_spent = filtered_df[(filtered_df['Category'] ==
