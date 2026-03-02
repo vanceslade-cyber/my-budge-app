@@ -296,7 +296,7 @@ def render_budget_row(row, group_name, budget_view_state, filtered_tx_df, curren
 
 
 # --- APP HEADER ---
-st.title("💰 Budget Manager")
+st.title("💰 My Budget")
 col_left, col_mid, col_right, col_plus = st.columns([1, 3, 1, 1])
 with col_left:
     st.button("◀", on_click=change_month, args=(-1,), use_container_width=True)
