@@ -23,14 +23,12 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 try:
     df = conn.read(worksheet="Sheet1", ttl=0)
     if 'Type' not in df.columns: df['Type'] = 'Expense'
-    # NEW: Safely add the Description column if it doesn't exist yet
     if 'Description' not in df.columns: df['Description'] = ""
     
     df['Type'] = df['Type'].fillna('Expense')
     df['Description'] = df['Description'].fillna("")
 except Exception as e:
     st.error(f"Transaction handshake failed. Error: {e}")
-    # NEW: Updated fallback schema
     df = pd.DataFrame(columns=["Date", "Type", "Merchant", "Category", "Amount", "Description"])
 
 try:
@@ -75,13 +73,33 @@ def item_details_modal(category_name, category_type, current_m_key):
 
     st.subheader(category_name)
 
+    # 🚨 NEW: Interactive Transaction Editor inside the Pop-up
     st.markdown("**Activity This Month**")
-    item_tx = filtered_df[filtered_df['Category'] == category_name]
-    if not item_tx.empty:
-        # NEW: Added 'Description' to the view table
-        display_tx = item_tx[['Date', 'Merchant', 'Description', 'Amount']].copy()
-        display_tx['Date'] = display_tx['Date'].dt.strftime('%b %d')
-        st.dataframe(display_tx, hide_index=True, use_container_width=True)
+    cat_tx_mask = (pd.to_datetime(df['Date'], errors='coerce').dt.month == st.session_state.view_date.month) & \
+                  (pd.to_datetime(df['Date'], errors='coerce').dt.year == st.session_state.view_date.year) & \
+                  (df['Category'] == category_name)
+    
+    cat_tx_df = df[cat_tx_mask].reset_index(drop=True)
+    
+    if not cat_tx_df.empty:
+        st.caption("💡 Select a row on the left to delete, or double-click to edit.")
+        edit_cols = ['Date', 'Merchant', 'Description', 'Amount']
+        edited_cat_tx = st.data_editor(cat_tx_df[edit_cols], num_rows="dynamic", use_container_width=True, key=f"edit_tx_{category_name}")
+        
+        if st.button("🗑️ Save Transaction Changes", use_container_width=True):
+            edited_cat_tx['Category'] = category_name
+            default_type = cat_tx_df['Type'].iloc[0] if not cat_tx_df.empty else ('Expense' if category_type != 'Income' else 'Income')
+            edited_cat_tx['Type'] = default_type
+            edited_cat_tx = edited_cat_tx[["Date", "Type", "Merchant", "Category", "Amount", "Description"]]
+            
+            df_remaining = df[~cat_tx_mask]
+            updated_master_tx = pd.concat([df_remaining, edited_cat_tx], ignore_index=True)
+            try:
+                conn.update(worksheet="Sheet1", data=updated_master_tx)
+                st.success("✅ Transactions Updated!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error: {e}")
     else:
         st.caption(f"No transactions logged for {category_name} this month.")
 
@@ -143,7 +161,6 @@ def transaction_modal():
         t_amt = st.number_input("Amount ($)", min_value=0.00, value=0.00, step=0.01)
         
         t_merch = st.text_input("Merchant", placeholder="Enter Name")
-        # NEW: Description field added here
         t_desc = st.text_input("Description (Optional)", placeholder="e.g., Prescriptions, Groceries")
         
         planned_items = month_plan_df['Category'].dropna().unique().tolist() if not month_plan_df.empty else []
@@ -153,7 +170,6 @@ def transaction_modal():
         if st.form_submit_button("Securely Sync Transaction", use_container_width=True):
             if t_merch and t_amt >= 0 and t_cat != "Select >":
                 clean_type = tx_type.split(" ")[1] 
-                # NEW: Included Description in the row upload
                 new_row = pd.DataFrame([[str(t_date), clean_type, t_merch, t_cat, t_amt, t_desc]], columns=["Date", "Type", "Merchant", "Category", "Amount", "Description"])
                 try:
                     updated_df = pd.concat([df, new_row], ignore_index=True)
