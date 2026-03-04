@@ -73,7 +73,6 @@ def item_details_modal(category_name, category_type, current_m_key):
 
     st.subheader(category_name)
 
-    # 🚨 NEW: Interactive Transaction Editor inside the Pop-up
     st.markdown("**Activity This Month**")
     cat_tx_mask = (pd.to_datetime(df['Date'], errors='coerce').dt.month == st.session_state.view_date.month) & \
                   (pd.to_datetime(df['Date'], errors='coerce').dt.year == st.session_state.view_date.year) & \
@@ -302,24 +301,52 @@ tab_budget, tab_transactions, tab_manage = st.tabs(["📊 Budget", "💳 Transac
 with tab_budget:
     budget_view = st.radio("Budget View", ["Planned", "Spent", "Remaining"], horizontal=True, label_visibility="collapsed")
     
+    # --- MATH PREPARATION ---
+    # 🚨 GHOST MATH ISOLATION: Finds ANY item you put in the Reimbursable category
     reimbursable_cats = month_plan_df[month_plan_df['Type'] == 'Reimbursable']['Category'].tolist() if not month_plan_df.empty else []
+    
+    # Total Income
     total_planned_income = income_df['Planned_Amount'].astype(float).sum() if not income_df.empty else 0.0
     
+    # 🚨 ZERO-BASED BUDGET PROTECTION: Excludes ANY item where Type is Reimbursable 
+    if not month_plan_df.empty:
+        expense_plan_df = month_plan_df[(month_plan_df['Type'] != 'Income') & (month_plan_df['Type'] != 'Reimbursable')]
+        total_planned_expenses = expense_plan_df['Planned_Amount'].astype(float).sum()
+    else:
+        total_planned_expenses = 0.0
+        
+    # Total Spent (Ignores Reimbursable transactions)
     if not filtered_df.empty:
         expense_df = filtered_df[(filtered_df['Type'] != 'Income') & (~filtered_df['Category'].isin(reimbursable_cats))]
     else:
         expense_df = pd.DataFrame()
-        
     total_spent = expense_df['Amount'].astype(float).sum() if not expense_df.empty else 0.0
-    remaining = total_planned_income - total_spent
     
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Planned Income", f"${total_planned_income:,.2f}")
-    col2.metric("Left to Assign", f"${remaining:,.2f}")
-    col3.metric("Total Spent", f"${total_spent:,.2f}")
+    # Remaining to Spend
+    remaining_to_spend = total_planned_income - total_spent
     
+    # Zero-Based Budget Calculation
+    left_to_budget = total_planned_income - total_planned_expenses
+    
+    # --- 1. THE ZERO-BASED BANNER ---
+    if left_to_budget > 0:
+        st.info(f"You have **${left_to_budget:,.2f}** left to budget.")
+    elif left_to_budget < 0:
+        st.error(f"You are **${abs(left_to_budget):,.2f}** over budget.")
+    else:
+        st.success("✅ It's a zero-based budget!")
+        
+    # --- 2. THE DYNAMIC HEADER METRIC ---
+    if budget_view == "Planned":
+        st.metric("Planned Income", f"${total_planned_income:,.2f}")
+    elif budget_view == "Spent":
+        st.metric("Spent So Far", f"${total_spent:,.2f}")
+    else:
+        st.metric("Remaining to Spend", f"${remaining_to_spend:,.2f}")
+        
     st.write("") 
     
+    # --- 3. THE INCOME SECTION ---
     inc_header_start = "<div style='display: flex; justify-content: space-between; align-items: flex-end;'>"
     inc_header_title = f"<h5 style='color: gray; margin-bottom: 0px;'>Income</h5>"
     inc_header_view = f"<span style='color: gray; margin-bottom: 0px;'>{budget_view}</span>"
@@ -338,7 +365,7 @@ with tab_budget:
     st.write("") 
     st.write("") 
 
-    # --- 2. THE DYNAMIC EXPENSE SECTIONS ---
+    # --- 4. THE DYNAMIC EXPENSE SECTIONS ---
     expense_groups = ["Giving", "Savings", "Housing", "Transportation", "Food", "Subscriptions", "Lifestyle", "Health", "Insurance", "Debt", "Reimbursable"]
     
     for group in expense_groups:
