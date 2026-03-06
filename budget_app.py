@@ -22,6 +22,7 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 try:
     df = conn.read(worksheet="Sheet1", ttl=0)
+    df.columns = df.columns.str.strip() # Strip accidental spaces from Google Sheets
     if 'Type' not in df.columns: df['Type'] = 'Expense'
     if 'Description' not in df.columns: df['Description'] = ""
     
@@ -33,15 +34,17 @@ except Exception as e:
 
 try:
     plan_df = conn.read(worksheet="Plan", ttl=0)
+    plan_df.columns = plan_df.columns.str.strip() # Strip accidental spaces from Google Sheets
+    
     if 'Due_Date' not in plan_df.columns: plan_df['Due_Date'] = ""
-    if 'Is_Fund' not in plan_df.columns: plan_df['Is_Fund'] = False
+    if 'Is_Fund' not in plan_df.columns: plan_df['Is_Fund'] = "FALSE"
     if 'Current_Balance' not in plan_df.columns: plan_df['Current_Balance'] = 0.0
     if 'Target_Balance' not in plan_df.columns: plan_df['Target_Balance'] = 0.0
 
     plan_df['Due_Date'] = plan_df['Due_Date'].fillna("")
     
-    # Bulletproof boolean casting
-    plan_df['Is_Fund'] = plan_df['Is_Fund'].astype(str).str.strip().str.lower().isin(['true', '1', 't', 'y', 'yes'])
+    # 🚨 BULLETPROOF STRING-LOCK: Forces everything to a literal "TRUE" or "FALSE" string
+    plan_df['Is_Fund'] = plan_df['Is_Fund'].apply(lambda x: "TRUE" if str(x).strip().upper() in ['TRUE', '1', 'T', 'Y', 'YES'] else "FALSE")
     
     plan_df['Current_Balance'] = pd.to_numeric(plan_df['Current_Balance'], errors='coerce').fillna(0.0)
     plan_df['Target_Balance'] = pd.to_numeric(plan_df['Target_Balance'], errors='coerce').fillna(0.0)
@@ -98,7 +101,7 @@ def item_details_modal(category_name, category_type, current_m_key):
             updated_master_tx = pd.concat([df_remaining, edited_cat_tx], ignore_index=True)
             try:
                 conn.update(worksheet="Sheet1", data=updated_master_tx)
-                st.cache_data.clear() # 🚨 FORCING CACHE WIPE
+                st.cache_data.clear() 
                 st.success("✅ Transactions Updated!")
                 st.rerun()
             except Exception as e:
@@ -126,7 +129,8 @@ def item_details_modal(category_name, category_type, current_m_key):
         st.divider()
         st.markdown("**🐖 Fund**")
         
-        is_fund = bool(current_plan_row.get('Is_Fund', False))
+        # 🚨 String Check! Evaluates the strict text string.
+        is_fund = str(current_plan_row.get('Is_Fund', 'FALSE')).strip().upper() == 'TRUE'
         
         make_fund = st.toggle("Make Fund", value=is_fund, key=f"fund_toggle_{category_name}_{current_m_key}")
         
@@ -150,13 +154,14 @@ def item_details_modal(category_name, category_type, current_m_key):
     if st.button("💾 Save Item Settings", type="primary", use_container_width=True, key=f"save_settings_{category_name}_{current_m_key}"):
         plan_df.at[row_idx, 'Due_Date'] = str(d_date) if d_date else ""
         if category_type == "Savings":
-            plan_df.at[row_idx, 'Is_Fund'] = make_fund
+            # 🚨 Writes the literal string back to the database
+            plan_df.at[row_idx, 'Is_Fund'] = "TRUE" if make_fund else "FALSE"
             plan_df.at[row_idx, 'Current_Balance'] = float(c_bal)
             plan_df.at[row_idx, 'Target_Balance'] = float(t_bal)
 
         try:
             conn.update(worksheet="Plan", data=plan_df)
-            st.cache_data.clear() # 🚨 FORCING CACHE WIPE
+            st.cache_data.clear() 
             st.success("✅ Settings Saved!")
             st.rerun()
         except Exception as e:
@@ -188,7 +193,7 @@ def transaction_modal():
                 try:
                     updated_df = pd.concat([df, new_tx], ignore_index=True)
                     conn.update(worksheet="Sheet1", data=updated_df)
-                    st.cache_data.clear() # 🚨 FORCING CACHE WIPE
+                    st.cache_data.clear()
                     st.success("✅ Transaction Saved!")
                     st.rerun()
                 except Exception as e:
@@ -204,12 +209,12 @@ def add_income_modal():
         
         if st.form_submit_button("Save Income", use_container_width=True):
             if i_name and i_amt >= 0:
-                new_row = {"Month": current_month_key, "Type": "Income", "Category": i_name, "Planned_Amount": i_amt, "Due_Date": "", "Is_Fund": False, "Current_Balance": 0.0, "Target_Balance": 0.0}
+                new_row = {"Month": current_month_key, "Type": "Income", "Category": i_name, "Planned_Amount": i_amt, "Due_Date": "", "Is_Fund": "FALSE", "Current_Balance": 0.0, "Target_Balance": 0.0}
                 new_plan = pd.DataFrame([new_row])
                 try:
                     updated_plan = pd.concat([plan_df, new_plan], ignore_index=True)
                     conn.update(worksheet="Plan", data=updated_plan)
-                    st.cache_data.clear() # 🚨 FORCING CACHE WIPE
+                    st.cache_data.clear() 
                     st.success("✅ Income Added!")
                     st.rerun()
                 except Exception as e:
@@ -226,12 +231,12 @@ def add_planned_item_modal(section_name):
         
         if st.form_submit_button("Save Item", use_container_width=True):
             if i_name and i_amt >= 0:
-                new_row = {"Month": current_month_key, "Type": section_name, "Category": i_name, "Planned_Amount": i_amt, "Due_Date": "", "Is_Fund": False, "Current_Balance": 0.0, "Target_Balance": 0.0}
+                new_row = {"Month": current_month_key, "Type": section_name, "Category": i_name, "Planned_Amount": i_amt, "Due_Date": "", "Is_Fund": "FALSE", "Current_Balance": 0.0, "Target_Balance": 0.0}
                 new_plan = pd.DataFrame([new_row])
                 try:
                     updated_plan = pd.concat([plan_df, new_plan], ignore_index=True)
                     conn.update(worksheet="Plan", data=updated_plan)
-                    st.cache_data.clear() # 🚨 FORCING CACHE WIPE
+                    st.cache_data.clear()
                     st.success(f"✅ Added to {section_name}!")
                     st.rerun()
                 except Exception as e:
@@ -250,7 +255,8 @@ def render_budget_row(row, group_name, budget_view_state, filtered_tx_df, curren
     else:
         cat_spent = 0.0
     
-    is_savings_fund = (group_name == "Savings") and row['Is_Fund']
+    # 🚨 Exact String comparison locks the math in place
+    is_savings_fund = (group_name == "Savings") and (str(row.get('Is_Fund', 'FALSE')).strip().upper() == 'TRUE')
     
     if is_savings_fund:
         starting_bal = float(row['Current_Balance'])
@@ -457,7 +463,7 @@ with tab_manage:
         updated_master_plan = pd.concat([plan_remaining, edited_plan], ignore_index=True)
         try:
             conn.update(worksheet="Plan", data=updated_master_plan)
-            st.cache_data.clear() # 🚨 FORCING CACHE WIPE
+            st.cache_data.clear() 
             st.success("✅ Plan Updated Permanently!")
             st.rerun()
         except Exception as e:
@@ -477,7 +483,7 @@ with tab_manage:
         updated_master_tx = pd.concat([tx_remaining, edited_tx], ignore_index=True)
         try:
             conn.update(worksheet="Sheet1", data=updated_master_tx)
-            st.cache_data.clear() # 🚨 FORCING CACHE WIPE
+            st.cache_data.clear() 
             st.success("✅ Transactions Updated Permanently!")
             st.rerun()
         except Exception as e:
