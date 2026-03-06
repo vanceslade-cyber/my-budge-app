@@ -39,7 +39,10 @@ try:
     if 'Target_Balance' not in plan_df.columns: plan_df['Target_Balance'] = 0.0
 
     plan_df['Due_Date'] = plan_df['Due_Date'].fillna("")
-    plan_df['Is_Fund'] = plan_df['Is_Fund'].fillna(False)
+    
+    # 🚨 BUG FIX: Bulletproof boolean casting so Google Sheets strings never crash the Streamlit toggle
+    plan_df['Is_Fund'] = plan_df['Is_Fund'].astype(str).str.strip().str.lower().isin(['true', '1', 't', 'y', 'yes'])
+    
     plan_df['Current_Balance'] = pd.to_numeric(plan_df['Current_Balance'], errors='coerce').fillna(0.0)
     plan_df['Target_Balance'] = pd.to_numeric(plan_df['Target_Balance'], errors='coerce').fillna(0.0)
 except Exception as e:
@@ -83,10 +86,8 @@ def item_details_modal(category_name, category_type, current_m_key):
     if not cat_tx_df.empty:
         st.caption("💡 Select a row on the left to delete, or double-click to edit.")
         edit_cols = ['Date', 'Merchant', 'Description', 'Amount']
-        # 🚨 FIX: Explicit Key added to Data Editor
         edited_cat_tx = st.data_editor(cat_tx_df[edit_cols], num_rows="dynamic", use_container_width=True, key=f"edit_tx_{category_name}_{current_m_key}")
         
-        # 🚨 FIX: Explicit Key added to Button
         if st.button("🗑️ Save Transaction Changes", use_container_width=True, key=f"btn_save_tx_{category_name}_{current_m_key}"):
             edited_cat_tx['Category'] = category_name
             default_type = cat_tx_df['Type'].iloc[0] if not cat_tx_df.empty else ('Expense' if category_type != 'Income' else 'Income')
@@ -114,7 +115,6 @@ def item_details_modal(category_name, category_type, current_m_key):
     
     st.markdown("**📅 Schedule**")
     st.markdown("<p style='color: gray; font-size: small; margin-bottom: 0px;'>Due Date</p>", unsafe_allow_html=True)
-    # 🚨 FIX: Explicit Key added to Date Input
     d_date = st.date_input("Due Date", value=parsed_due, label_visibility="collapsed", key=f"due_date_{category_name}_{current_m_key}")
 
     make_fund = False
@@ -124,9 +124,10 @@ def item_details_modal(category_name, category_type, current_m_key):
     if category_type == "Savings":
         st.divider()
         st.markdown("**🐖 Fund**")
+        
+        # Guaranteed to be a boolean now because of our fix above
         is_fund = bool(current_plan_row.get('Is_Fund', False))
         
-        # 🚨 FIX: Explicit Key added to Toggle so Streamlit never loses track of it
         make_fund = st.toggle("Make Fund", value=is_fund, key=f"fund_toggle_{category_name}_{current_m_key}")
         
         if make_fund:
@@ -140,14 +141,12 @@ def item_details_modal(category_name, category_type, current_m_key):
             st.markdown("<p style='color: gray; font-size: small; margin-bottom: 0px;'>Target Amount ($)</p>", unsafe_allow_html=True)
             t_bal = st.number_input("Target Amount ($)", value=t_bal, min_value=0.0, step=10.0, label_visibility="collapsed", key=f"tbal_{category_name}_{current_m_key}")
             
-            # 🚀 V2.0 FEATURE: Goal Progress Bar!
             if t_bal > 0:
                 progress = min(c_bal / t_bal, 1.0)
                 st.progress(progress)
                 st.caption(f"🎯 **{progress*100:.1f}%** to Goal")
 
     st.divider()
-    # 🚨 FIX: Explicit Key added to Save Button
     if st.button("💾 Save Item Settings", type="primary", use_container_width=True, key=f"save_settings_{category_name}_{current_m_key}"):
         plan_df.at[row_idx, 'Due_Date'] = str(d_date) if d_date else ""
         if category_type == "Savings":
@@ -183,9 +182,11 @@ def transaction_modal():
         if st.form_submit_button("Securely Sync Transaction", use_container_width=True):
             if t_merch and t_amt >= 0 and t_cat != "Select >":
                 clean_type = tx_type.split(" ")[1] 
-                new_row = pd.DataFrame([[str(t_date), clean_type, t_merch, t_cat, t_amt, t_desc]], columns=["Date", "Type", "Merchant", "Category", "Amount", "Description"])
+                # 🚨 STRUCTURAL UPGRADE: Using a dictionary to prevent column misalignment
+                new_row = {"Date": str(t_date), "Type": clean_type, "Merchant": t_merch, "Category": t_cat, "Amount": t_amt, "Description": t_desc}
+                new_tx = pd.DataFrame([new_row])
                 try:
-                    updated_df = pd.concat([df, new_row], ignore_index=True)
+                    updated_df = pd.concat([df, new_tx], ignore_index=True)
                     conn.update(worksheet="Sheet1", data=updated_df)
                     st.success("✅ Transaction Saved!")
                     st.rerun()
@@ -202,7 +203,8 @@ def add_income_modal():
         
         if st.form_submit_button("Save Income", use_container_width=True):
             if i_name and i_amt >= 0:
-                new_plan = pd.DataFrame([[current_month_key, "Income", i_name, i_amt, "", False, 0.0, 0.0]], columns=plan_df.columns)
+                new_row = {"Month": current_month_key, "Type": "Income", "Category": i_name, "Planned_Amount": i_amt, "Due_Date": "", "Is_Fund": False, "Current_Balance": 0.0, "Target_Balance": 0.0}
+                new_plan = pd.DataFrame([new_row])
                 try:
                     updated_plan = pd.concat([plan_df, new_plan], ignore_index=True)
                     conn.update(worksheet="Plan", data=updated_plan)
@@ -222,7 +224,8 @@ def add_planned_item_modal(section_name):
         
         if st.form_submit_button("Save Item", use_container_width=True):
             if i_name and i_amt >= 0:
-                new_plan = pd.DataFrame([[current_month_key, section_name, i_name, i_amt, "", False, 0.0, 0.0]], columns=plan_df.columns)
+                new_row = {"Month": current_month_key, "Type": section_name, "Category": i_name, "Planned_Amount": i_amt, "Due_Date": "", "Is_Fund": False, "Current_Balance": 0.0, "Target_Balance": 0.0}
+                new_plan = pd.DataFrame([new_row])
                 try:
                     updated_plan = pd.concat([plan_df, new_plan], ignore_index=True)
                     conn.update(worksheet="Plan", data=updated_plan)
@@ -341,7 +344,6 @@ with tab_budget:
     else:
         st.success("✅ It's a zero-based budget!")
         
-    # 🚀 V2.0 FEATURE: Global Budget Utilization Bar
     st.write("")
     if total_planned_income > 0:
         spend_ratio = min(total_spent / total_planned_income, 1.0)
@@ -405,17 +407,6 @@ with tab_budget:
             add_planned_item_modal(group)
             
         st.write("")
-        
-    # 🚀 V2.0 FEATURE: Expense Breakdown Analytics
-    st.write("")
-    with st.expander("📊 View Spending Breakdown"):
-        if not expense_df.empty:
-            cat_spend = expense_df.groupby('Category')['Amount'].sum().reset_index()
-            # Sort so the biggest expenses are at the top of the chart!
-            cat_spend = cat_spend.sort_values('Amount', ascending=False)
-            st.bar_chart(cat_spend.set_index('Category'))
-        else:
-            st.caption("No spending data yet.")
 
 # ==========================================
 # 💳 VIEW 2: THE TRANSACTIONS TAB
@@ -442,7 +433,6 @@ with tab_transactions:
 with tab_manage:
     st.info("💡 **How to use:** Double-click any cell to edit it. To delete an item, click the checkbox on the far left of its row, then click the trash can icon at the top right of the table.")
     
-    # 🚀 V2.0 FEATURE: Offline Backup Buttons
     st.subheader("💾 Offline Backup")
     st.caption("Download your master databases as CSV files for safekeeping.")
     col_dl1, col_dl2 = st.columns(2)
