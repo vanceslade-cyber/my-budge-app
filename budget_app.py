@@ -40,7 +40,7 @@ try:
 
     plan_df['Due_Date'] = plan_df['Due_Date'].fillna("")
     
-    # 🚨 BUG FIX: Bulletproof boolean casting so Google Sheets strings never crash the Streamlit toggle
+    # Bulletproof boolean casting
     plan_df['Is_Fund'] = plan_df['Is_Fund'].astype(str).str.strip().str.lower().isin(['true', '1', 't', 'y', 'yes'])
     
     plan_df['Current_Balance'] = pd.to_numeric(plan_df['Current_Balance'], errors='coerce').fillna(0.0)
@@ -98,6 +98,7 @@ def item_details_modal(category_name, category_type, current_m_key):
             updated_master_tx = pd.concat([df_remaining, edited_cat_tx], ignore_index=True)
             try:
                 conn.update(worksheet="Sheet1", data=updated_master_tx)
+                st.cache_data.clear() # 🚨 FORCING CACHE WIPE
                 st.success("✅ Transactions Updated!")
                 st.rerun()
             except Exception as e:
@@ -125,7 +126,6 @@ def item_details_modal(category_name, category_type, current_m_key):
         st.divider()
         st.markdown("**🐖 Fund**")
         
-        # Guaranteed to be a boolean now because of our fix above
         is_fund = bool(current_plan_row.get('Is_Fund', False))
         
         make_fund = st.toggle("Make Fund", value=is_fund, key=f"fund_toggle_{category_name}_{current_m_key}")
@@ -156,6 +156,7 @@ def item_details_modal(category_name, category_type, current_m_key):
 
         try:
             conn.update(worksheet="Plan", data=plan_df)
+            st.cache_data.clear() # 🚨 FORCING CACHE WIPE
             st.success("✅ Settings Saved!")
             st.rerun()
         except Exception as e:
@@ -182,12 +183,12 @@ def transaction_modal():
         if st.form_submit_button("Securely Sync Transaction", use_container_width=True):
             if t_merch and t_amt >= 0 and t_cat != "Select >":
                 clean_type = tx_type.split(" ")[1] 
-                # 🚨 STRUCTURAL UPGRADE: Using a dictionary to prevent column misalignment
                 new_row = {"Date": str(t_date), "Type": clean_type, "Merchant": t_merch, "Category": t_cat, "Amount": t_amt, "Description": t_desc}
                 new_tx = pd.DataFrame([new_row])
                 try:
                     updated_df = pd.concat([df, new_tx], ignore_index=True)
                     conn.update(worksheet="Sheet1", data=updated_df)
+                    st.cache_data.clear() # 🚨 FORCING CACHE WIPE
                     st.success("✅ Transaction Saved!")
                     st.rerun()
                 except Exception as e:
@@ -208,6 +209,7 @@ def add_income_modal():
                 try:
                     updated_plan = pd.concat([plan_df, new_plan], ignore_index=True)
                     conn.update(worksheet="Plan", data=updated_plan)
+                    st.cache_data.clear() # 🚨 FORCING CACHE WIPE
                     st.success("✅ Income Added!")
                     st.rerun()
                 except Exception as e:
@@ -229,6 +231,7 @@ def add_planned_item_modal(section_name):
                 try:
                     updated_plan = pd.concat([plan_df, new_plan], ignore_index=True)
                     conn.update(worksheet="Plan", data=updated_plan)
+                    st.cache_data.clear() # 🚨 FORCING CACHE WIPE
                     st.success(f"✅ Added to {section_name}!")
                     st.rerun()
                 except Exception as e:
@@ -454,6 +457,7 @@ with tab_manage:
         updated_master_plan = pd.concat([plan_remaining, edited_plan], ignore_index=True)
         try:
             conn.update(worksheet="Plan", data=updated_master_plan)
+            st.cache_data.clear() # 🚨 FORCING CACHE WIPE
             st.success("✅ Plan Updated Permanently!")
             st.rerun()
         except Exception as e:
@@ -473,6 +477,7 @@ with tab_manage:
         updated_master_tx = pd.concat([tx_remaining, edited_tx], ignore_index=True)
         try:
             conn.update(worksheet="Sheet1", data=updated_master_tx)
+            st.cache_data.clear() # 🚨 FORCING CACHE WIPE
             st.success("✅ Transactions Updated Permanently!")
             st.rerun()
         except Exception as e:
