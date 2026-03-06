@@ -83,9 +83,11 @@ def item_details_modal(category_name, category_type, current_m_key):
     if not cat_tx_df.empty:
         st.caption("💡 Select a row on the left to delete, or double-click to edit.")
         edit_cols = ['Date', 'Merchant', 'Description', 'Amount']
-        edited_cat_tx = st.data_editor(cat_tx_df[edit_cols], num_rows="dynamic", use_container_width=True, key=f"edit_tx_{category_name}")
+        # 🚨 FIX: Explicit Key added to Data Editor
+        edited_cat_tx = st.data_editor(cat_tx_df[edit_cols], num_rows="dynamic", use_container_width=True, key=f"edit_tx_{category_name}_{current_m_key}")
         
-        if st.button("🗑️ Save Transaction Changes", use_container_width=True):
+        # 🚨 FIX: Explicit Key added to Button
+        if st.button("🗑️ Save Transaction Changes", use_container_width=True, key=f"btn_save_tx_{category_name}_{current_m_key}"):
             edited_cat_tx['Category'] = category_name
             default_type = cat_tx_df['Type'].iloc[0] if not cat_tx_df.empty else ('Expense' if category_type != 'Income' else 'Income')
             edited_cat_tx['Type'] = default_type
@@ -112,7 +114,8 @@ def item_details_modal(category_name, category_type, current_m_key):
     
     st.markdown("**📅 Schedule**")
     st.markdown("<p style='color: gray; font-size: small; margin-bottom: 0px;'>Due Date</p>", unsafe_allow_html=True)
-    d_date = st.date_input("Due Date", value=parsed_due, label_visibility="collapsed")
+    # 🚨 FIX: Explicit Key added to Date Input
+    d_date = st.date_input("Due Date", value=parsed_due, label_visibility="collapsed", key=f"due_date_{category_name}_{current_m_key}")
 
     make_fund = False
     c_bal = 0.0
@@ -123,18 +126,29 @@ def item_details_modal(category_name, category_type, current_m_key):
         st.markdown("**🐖 Fund**")
         is_fund = bool(current_plan_row.get('Is_Fund', False))
         
-        make_fund = st.toggle("Make Fund", value=is_fund)
+        # 🚨 FIX: Explicit Key added to Toggle so Streamlit never loses track of it
+        make_fund = st.toggle("Make Fund", value=is_fund, key=f"fund_toggle_{category_name}_{current_m_key}")
+        
         if make_fund:
             st.info("Balances carry over month to month.")
             c_bal = float(current_plan_row.get('Current_Balance', 0.0))
             t_bal = float(current_plan_row.get('Target_Balance', 0.0))
+            
             st.markdown("<p style='color: gray; font-size: small; margin-bottom: 0px;'>Current Balance ($)</p>", unsafe_allow_html=True)
-            c_bal = st.number_input("Current Balance ($)", value=c_bal, min_value=0.0, step=10.0, label_visibility="collapsed")
+            c_bal = st.number_input("Current Balance ($)", value=c_bal, min_value=0.0, step=10.0, label_visibility="collapsed", key=f"cbal_{category_name}_{current_m_key}")
+            
             st.markdown("<p style='color: gray; font-size: small; margin-bottom: 0px;'>Target Amount ($)</p>", unsafe_allow_html=True)
-            t_bal = st.number_input("Target Amount ($)", value=t_bal, min_value=0.0, step=10.0, label_visibility="collapsed")
+            t_bal = st.number_input("Target Amount ($)", value=t_bal, min_value=0.0, step=10.0, label_visibility="collapsed", key=f"tbal_{category_name}_{current_m_key}")
+            
+            # 🚀 V2.0 FEATURE: Goal Progress Bar!
+            if t_bal > 0:
+                progress = min(c_bal / t_bal, 1.0)
+                st.progress(progress)
+                st.caption(f"🎯 **{progress*100:.1f}%** to Goal")
 
     st.divider()
-    if st.button("💾 Save Item Settings", type="primary", use_container_width=True):
+    # 🚨 FIX: Explicit Key added to Save Button
+    if st.button("💾 Save Item Settings", type="primary", use_container_width=True, key=f"save_settings_{category_name}_{current_m_key}"):
         plan_df.at[row_idx, 'Due_Date'] = str(d_date) if d_date else ""
         if category_type == "Savings":
             plan_df.at[row_idx, 'Is_Fund'] = make_fund
@@ -203,7 +217,7 @@ def add_income_modal():
 def add_planned_item_modal(section_name):
     with st.form(f"form_{section_name}", clear_on_submit=True):
         st.markdown(f"Add new item to **{section_name}**")
-        i_name = st.text_input("Item Name", placeholder="e.g., Groceries, Rent, Fuel, Mom")
+        i_name = st.text_input("Item Name", placeholder="e.g., Groceries, Rent, Fuel")
         i_amt = st.number_input("Planned Amount ($)", min_value=0.00, value=0.00, step=10.00)
         
         if st.form_submit_button("Save Item", use_container_width=True):
@@ -301,31 +315,22 @@ tab_budget, tab_transactions, tab_manage = st.tabs(["📊 Budget", "💳 Transac
 with tab_budget:
     budget_view = st.radio("Budget View", ["Planned", "Spent", "Remaining"], horizontal=True, label_visibility="collapsed")
     
-    # --- MATH PREPARATION ---
-    # 🚨 GHOST MATH ISOLATION: Finds ANY item you put in the Reimbursable category
     reimbursable_cats = month_plan_df[month_plan_df['Type'] == 'Reimbursable']['Category'].tolist() if not month_plan_df.empty else []
-    
-    # Total Income
     total_planned_income = income_df['Planned_Amount'].astype(float).sum() if not income_df.empty else 0.0
     
-    # 🚨 ZERO-BASED BUDGET PROTECTION: Excludes ANY item where Type is Reimbursable 
     if not month_plan_df.empty:
         expense_plan_df = month_plan_df[(month_plan_df['Type'] != 'Income') & (month_plan_df['Type'] != 'Reimbursable')]
         total_planned_expenses = expense_plan_df['Planned_Amount'].astype(float).sum()
     else:
         total_planned_expenses = 0.0
         
-    # Total Spent (Ignores Reimbursable transactions)
     if not filtered_df.empty:
         expense_df = filtered_df[(filtered_df['Type'] != 'Income') & (~filtered_df['Category'].isin(reimbursable_cats))]
     else:
         expense_df = pd.DataFrame()
+        
     total_spent = expense_df['Amount'].astype(float).sum() if not expense_df.empty else 0.0
-    
-    # Remaining to Spend
     remaining_to_spend = total_planned_income - total_spent
-    
-    # Zero-Based Budget Calculation
     left_to_budget = total_planned_income - total_planned_expenses
     
     # --- 1. THE ZERO-BASED BANNER ---
@@ -335,6 +340,14 @@ with tab_budget:
         st.error(f"You are **${abs(left_to_budget):,.2f}** over budget.")
     else:
         st.success("✅ It's a zero-based budget!")
+        
+    # 🚀 V2.0 FEATURE: Global Budget Utilization Bar
+    st.write("")
+    if total_planned_income > 0:
+        spend_ratio = min(total_spent / total_planned_income, 1.0)
+        st.markdown(f"<p style='text-align: center; color: gray; margin-bottom: 5px; font-size: small;'>Budget Utilization ({spend_ratio*100:.1f}%)</p>", unsafe_allow_html=True)
+        st.progress(spend_ratio)
+    st.write("")
         
     # --- 2. THE DYNAMIC HEADER METRIC ---
     if budget_view == "Planned":
@@ -392,6 +405,17 @@ with tab_budget:
             add_planned_item_modal(group)
             
         st.write("")
+        
+    # 🚀 V2.0 FEATURE: Expense Breakdown Analytics
+    st.write("")
+    with st.expander("📊 View Spending Breakdown"):
+        if not expense_df.empty:
+            cat_spend = expense_df.groupby('Category')['Amount'].sum().reset_index()
+            # Sort so the biggest expenses are at the top of the chart!
+            cat_spend = cat_spend.sort_values('Amount', ascending=False)
+            st.bar_chart(cat_spend.set_index('Category'))
+        else:
+            st.caption("No spending data yet.")
 
 # ==========================================
 # 💳 VIEW 2: THE TRANSACTIONS TAB
@@ -418,6 +442,17 @@ with tab_transactions:
 with tab_manage:
     st.info("💡 **How to use:** Double-click any cell to edit it. To delete an item, click the checkbox on the far left of its row, then click the trash can icon at the top right of the table.")
     
+    # 🚀 V2.0 FEATURE: Offline Backup Buttons
+    st.subheader("💾 Offline Backup")
+    st.caption("Download your master databases as CSV files for safekeeping.")
+    col_dl1, col_dl2 = st.columns(2)
+    with col_dl1:
+        st.download_button(label="📥 Download Transactions", data=df.to_csv(index=False), file_name="budget_transactions_backup.csv", mime="text/csv", use_container_width=True)
+    with col_dl2:
+        st.download_button(label="📥 Download Budget Plan", data=plan_df.to_csv(index=False), file_name="budget_plan_backup.csv", mime="text/csv", use_container_width=True)
+
+    st.divider()
+
     st.subheader(f"Edit {current_month_str} Plan")
     plan_mask = plan_df['Month'] == current_month_key
     current_plan_view = plan_df[plan_mask].reset_index(drop=True)
