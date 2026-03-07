@@ -17,6 +17,14 @@ def change_month(months_to_add):
     new_month = new_month % 12 + 1
     st.session_state.view_date = datetime.date(new_year, new_month, 1)
 
+# --- HELPER: BULLETPROOF NUMBER PARSER ---
+def safe_float(val):
+    try:
+        # Violently strip out dollar signs, commas, and hidden spaces
+        return float(str(val).replace('$', '').replace(',', '').strip())
+    except:
+        return 0.0
+
 # --- DATABASE CONNECTION & SCHEMA ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -26,10 +34,10 @@ try:
     if 'Type' not in df.columns: df['Type'] = 'Expense'
     if 'Description' not in df.columns: df['Description'] = ""
     
-    # 🚨 DATA CLEANER: Strips all invisible spaces from Google Sheets text
     df['Type'] = df['Type'].astype(str).str.strip().fillna('Expense')
     df['Category'] = df['Category'].astype(str).str.strip()
     df['Description'] = df['Description'].fillna("")
+    df['Amount'] = df['Amount'].apply(safe_float)
 except Exception as e:
     st.error(f"Transaction handshake failed. Error: {e}")
     df = pd.DataFrame(columns=["Date", "Type", "Merchant", "Category", "Amount", "Description"])
@@ -38,21 +46,22 @@ try:
     plan_df = conn.read(worksheet="Plan", ttl=0)
     plan_df.columns = plan_df.columns.str.strip() 
     
-    if 'Due_Date' not in plan_df.columns: plan_df['Due_Date'] = ""
-    if 'Is_Fund' not in plan_df.columns: plan_df['Is_Fund'] = False
-    if 'Current_Balance' not in plan_df.columns: plan_df['Current_Balance'] = 0.0
-    if 'Target_Balance' not in plan_df.columns: plan_df['Target_Balance'] = 0.0
+    # Ensure columns exist to prevent crashes
+    for col in ["Month", "Type", "Category", "Planned_Amount", "Due_Date", "Is_Fund", "Current_Balance", "Target_Balance"]:
+        if col not in plan_df.columns:
+            plan_df[col] = ""
 
-    # 🚨 DATA CLEANER: Strips all invisible spaces
     plan_df['Type'] = plan_df['Type'].astype(str).str.strip()
     plan_df['Category'] = plan_df['Category'].astype(str).str.strip()
     plan_df['Due_Date'] = plan_df['Due_Date'].fillna("")
     
-    # 🚨 BULLETPROOF BOOLEAN CASTER: Forces Google's mangled data back into pure Python booleans
-    plan_df['Is_Fund'] = plan_df['Is_Fund'].astype(str).str.strip().str.upper().isin(['TRUE', '1', 'T', 'Y', 'YES'])
+    # 🚨 THE STRING LOCK: Converts everything to literal YES/NO text
+    plan_df['Is_Fund'] = plan_df['Is_Fund'].astype(str).str.strip().str.upper()
+    plan_df['Is_Fund'] = plan_df['Is_Fund'].apply(lambda x: "YES" if x in ['TRUE', '1', 'T', 'Y', 'YES'] else "NO")
     
-    plan_df['Current_Balance'] = pd.to_numeric(plan_df['Current_Balance'], errors='coerce').fillna(0.0)
-    plan_df['Target_Balance'] = pd.to_numeric(plan_df['Target_Balance'], errors='coerce').fillna(0.0)
+    plan_df['Planned_Amount'] = plan_df['Planned_Amount'].apply(safe_float)
+    plan_df['Current_Balance'] = plan_df['Current_Balance'].apply(safe_float)
+    plan_df['Target_Balance'] = plan_df['Target_Balance'].apply(safe_float)
 except Exception as e:
     st.error(f"Plan handshake failed. Error: {e}")
     plan_df = pd.DataFrame(columns=["Month", "Type", "Category", "Planned_Amount", "Due_Date", "Is_Fund", "Current_Balance", "Target_Balance"])
@@ -74,7 +83,6 @@ income_df = month_plan_df[month_plan_df['Type'] == 'Income'] if not month_plan_d
 # --- THE ITEM DETAILS MODAL ---
 @st.dialog("📋 Item Details")
 def item_details_modal(category_name, category_type, current_m_key):
-    # Ensure perfectly clean strings for matching
     clean_cat_name = str(category_name).strip()
     clean_cat_type = str(category_type).strip()
     
@@ -88,6 +96,7 @@ def item_details_modal(category_name, category_type, current_m_key):
 
     st.subheader(clean_cat_name)
 
+    # 1. TRANSACTIONS SECTION
     st.markdown("**Activity This Month**")
     cat_tx_mask = (pd.to_datetime(df['Date'], errors='coerce').dt.month == st.session_state.view_date.month) & \
                   (pd.to_datetime(df['Date'], errors='coerce').dt.year == st.session_state.view_date.year) & \
@@ -118,35 +127,24 @@ def item_details_modal(category_name, category_type, current_m_key):
     else:
         st.caption(f"No transactions logged for {clean_cat_name} this month.")
 
-    st.divider()
-
-    existing_due = current_plan_row.get('Due_Date', "")
-    parsed_due = None
-    if pd.notna(existing_due) and str(existing_due).strip():
-        try: parsed_due = datetime.datetime.strptime(str(existing_due)[:10], "%Y-%m-%d").date()
-        except: pass
-    
-    st.markdown("**📅 Schedule**")
-    st.markdown("<p style='color: gray; font-size: small; margin-bottom: 0px;'>Due Date</p>", unsafe_allow_html=True)
-    d_date = st.date_input("Due Date", value=parsed_due, label_visibility="collapsed", key=f"due_date_{clean_cat_name}_{current_m_key}")
-
     make_fund = False
     c_bal = 0.0
     t_bal = 0.0
-    
+
+    # 2. FUND SECTION (Moved ABOVE the calendar!)
     if clean_cat_type == "Savings":
         st.divider()
         st.markdown("**🐖 Fund**")
         
-        # Pulls the strictly cleaned boolean from our dataframe
-        is_fund = bool(current_plan_row.get('Is_Fund', False))
+        # 🚨 String Check!
+        is_fund_status = str(current_plan_row.get('Is_Fund', 'NO')).strip().upper() == "YES"
         
-        make_fund = st.toggle("Make Fund", value=is_fund, key=f"fund_toggle_{clean_cat_name}_{current_m_key}")
+        make_fund = st.toggle("Make Fund", value=is_fund_status, key=f"fund_toggle_{clean_cat_name}_{current_m_key}")
         
         if make_fund:
             st.info("Balances carry over month to month.")
-            c_bal = float(current_plan_row.get('Current_Balance', 0.0))
-            t_bal = float(current_plan_row.get('Target_Balance', 0.0))
+            c_bal = safe_float(current_plan_row.get('Current_Balance', 0.0))
+            t_bal = safe_float(current_plan_row.get('Target_Balance', 0.0))
             
             st.markdown("<p style='color: gray; font-size: small; margin-bottom: 0px;'>Current Balance ($)</p>", unsafe_allow_html=True)
             c_bal = st.number_input("Current Balance ($)", value=c_bal, min_value=0.0, step=10.0, label_visibility="collapsed", key=f"cbal_{clean_cat_name}_{current_m_key}")
@@ -159,12 +157,24 @@ def item_details_modal(category_name, category_type, current_m_key):
                 st.progress(progress)
                 st.caption(f"🎯 **{progress*100:.1f}%** to Goal")
 
+    # 3. SCHEDULE SECTION
+    st.divider()
+    existing_due = current_plan_row.get('Due_Date', "")
+    parsed_due = None
+    if pd.notna(existing_due) and str(existing_due).strip():
+        try: parsed_due = datetime.datetime.strptime(str(existing_due)[:10], "%Y-%m-%d").date()
+        except: pass
+    
+    st.markdown("**📅 Schedule**")
+    st.markdown("<p style='color: gray; font-size: small; margin-bottom: 0px;'>Due Date</p>", unsafe_allow_html=True)
+    d_date = st.date_input("Due Date", value=parsed_due, label_visibility="collapsed", key=f"due_date_{clean_cat_name}_{current_m_key}")
+
     st.divider()
     if st.button("💾 Save Item Settings", type="primary", use_container_width=True, key=f"save_settings_{clean_cat_name}_{current_m_key}"):
         plan_df.loc[row_idx, 'Due_Date'] = str(d_date) if d_date else ""
         if clean_cat_type == "Savings":
-            # 🚨 Writes a pure, strict boolean back to the database
-            plan_df.loc[row_idx, 'Is_Fund'] = bool(make_fund)
+            # 🚨 Writes a pure YES/NO string back to the database
+            plan_df.loc[row_idx, 'Is_Fund'] = "YES" if make_fund else "NO"
             plan_df.loc[row_idx, 'Current_Balance'] = float(c_bal)
             plan_df.loc[row_idx, 'Target_Balance'] = float(t_bal)
 
@@ -218,7 +228,7 @@ def add_income_modal():
         
         if st.form_submit_button("Save Income", use_container_width=True):
             if i_name and i_amt >= 0:
-                new_row = {"Month": current_month_key, "Type": "Income", "Category": i_name, "Planned_Amount": i_amt, "Due_Date": "", "Is_Fund": False, "Current_Balance": 0.0, "Target_Balance": 0.0}
+                new_row = {"Month": current_month_key, "Type": "Income", "Category": i_name, "Planned_Amount": i_amt, "Due_Date": "", "Is_Fund": "NO", "Current_Balance": 0.0, "Target_Balance": 0.0}
                 new_plan = pd.DataFrame([new_row])
                 try:
                     updated_plan = pd.concat([plan_df, new_plan], ignore_index=True)
@@ -240,7 +250,7 @@ def add_planned_item_modal(section_name):
         
         if st.form_submit_button("Save Item", use_container_width=True):
             if i_name and i_amt >= 0:
-                new_row = {"Month": current_month_key, "Type": section_name, "Category": i_name, "Planned_Amount": i_amt, "Due_Date": "", "Is_Fund": False, "Current_Balance": 0.0, "Target_Balance": 0.0}
+                new_row = {"Month": current_month_key, "Type": section_name, "Category": i_name, "Planned_Amount": i_amt, "Due_Date": "", "Is_Fund": "NO", "Current_Balance": 0.0, "Target_Balance": 0.0}
                 new_plan = pd.DataFrame([new_row])
                 try:
                     updated_plan = pd.concat([plan_df, new_plan], ignore_index=True)
@@ -255,7 +265,7 @@ def add_planned_item_modal(section_name):
 
 # --- HELPER FUNCTION: Renders Dynamic Rows ---
 def render_budget_row(row, group_name, budget_view_state, filtered_tx_df, current_m_key):
-    planned_amt = float(row['Planned_Amount'])
+    planned_amt = safe_float(row['Planned_Amount'])
     
     if not filtered_tx_df.empty:
         is_cat = filtered_tx_df['Category'] == row['Category']
@@ -264,11 +274,12 @@ def render_budget_row(row, group_name, budget_view_state, filtered_tx_df, curren
     else:
         cat_spent = 0.0
     
-    # 🚨 PURE BOOLEAN MATH: No more string interpretation issues
-    is_savings_fund = (group_name == "Savings") and bool(row.get('Is_Fund', False))
+    # 🚨 PURE STRING MATH
+    is_fund_str = str(row.get('Is_Fund', 'NO')).strip().upper()
+    is_savings_fund = (group_name == "Savings") and (is_fund_str == "YES")
     
     if is_savings_fund:
-        starting_bal = float(row['Current_Balance'])
+        starting_bal = safe_float(row['Current_Balance'])
         spent_amt_to_display = cat_spent
         available_balance_to_display = starting_bal + planned_amt - cat_spent
     else:
@@ -285,6 +296,10 @@ def render_budget_row(row, group_name, budget_view_state, filtered_tx_df, curren
     col_label, col_amt = st.columns([3, 1], vertical_alignment="center")
     with col_label:
         due_d_str = row['Due_Date']
+        
+        # 🚨 VISUAL DEBUGGER: Adds a Pig icon to the name if it is successfully recognized as a Fund!
+        display_name = f"🐖 {row['Category']}" if is_savings_fund else row['Category']
+
         if pd.notna(due_d_str) and due_d_str.strip():
             col_modal_btn, col_modal_name = st.columns([1, 19], vertical_alignment="center")
             with col_modal_btn:
@@ -294,10 +309,10 @@ def render_budget_row(row, group_name, budget_view_state, filtered_tx_df, curren
                 try:
                     due_obj = datetime.datetime.strptime(str(due_d_str)[:10], "%Y-%m-%d")
                     formatted_due = due_obj.strftime("%b %d")
-                    st.markdown(f"<p style='color: gray; margin-bottom: 0px;'>{row['Category']}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='color: gray; margin-bottom: 0px;'>{display_name}</p>", unsafe_allow_html=True)
                     st.markdown(f"<p style='color: gray; font-size: small; margin-top: -10px; margin-bottom: 0px;'>Due {formatted_due}</p>", unsafe_allow_html=True)
                 except:
-                    st.markdown(f"<p style='color: gray; margin-bottom: 0px;'>{row['Category']}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='color: gray; margin-bottom: 0px;'>{display_name}</p>", unsafe_allow_html=True)
                     st.markdown(f"<p style='color: gray; font-size: small; margin-top: -10px; margin-bottom: 0px;'>Due {due_d_str}</p>", unsafe_allow_html=True)
         else:
             col_modal_btn, col_modal_name = st.columns([1, 19], vertical_alignment="center")
@@ -305,7 +320,7 @@ def render_budget_row(row, group_name, budget_view_state, filtered_tx_df, curren
                 if st.button("📝", type="tertiary", key=f"btn_details_nm_{row['Category']}_{current_m_key}"):
                     item_details_modal(row['Category'], group_name, current_m_key)
             with col_modal_name:
-                st.markdown(f"<p style='color: gray; margin-bottom: 0px;'>{row['Category']}</p>", unsafe_allow_html=True)
+                st.markdown(f"<p style='color: gray; margin-bottom: 0px;'>{display_name}</p>", unsafe_allow_html=True)
 
     with col_amt:
         st.markdown(f"<div style='text-align: right;'>${display_amt:,.2f}</div>", unsafe_allow_html=True)
