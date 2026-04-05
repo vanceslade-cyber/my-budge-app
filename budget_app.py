@@ -264,6 +264,8 @@ def add_planned_item_modal(section_name):
                 st.warning("Please enter a name and amount.")
 
 # --- HELPER FUNCTION: Renders Dynamic Rows ---
+# 🔧 FIX: Added group_name to ALL widget keys to prevent duplicate key crashes
+#    when the same category name exists in multiple budget groups.
 def render_budget_row(row, group_name, budget_view_state, filtered_tx_df, current_m_key):
     planned_amt = safe_float(row['Planned_Amount'])
     
@@ -303,7 +305,8 @@ def render_budget_row(row, group_name, budget_view_state, filtered_tx_df, curren
         if pd.notna(due_d_str) and due_d_str.strip():
             col_modal_btn, col_modal_name = st.columns([1, 19], vertical_alignment="center")
             with col_modal_btn:
-                if st.button("📝", type="tertiary", key=f"btn_details_m_{row['Category']}_{current_m_key}"):
+                # 🔧 FIX: Added group_name to key
+                if st.button("📝", type="tertiary", key=f"btn_details_m_{group_name}_{row['Category']}_{current_m_key}"):
                     item_details_modal(row['Category'], group_name, current_m_key)
             with col_modal_name:
                 try:
@@ -317,7 +320,8 @@ def render_budget_row(row, group_name, budget_view_state, filtered_tx_df, curren
         else:
             col_modal_btn, col_modal_name = st.columns([1, 19], vertical_alignment="center")
             with col_modal_btn:
-                if st.button("📝", type="tertiary", key=f"btn_details_nm_{row['Category']}_{current_m_key}"):
+                # 🔧 FIX: Added group_name to key
+                if st.button("📝", type="tertiary", key=f"btn_details_nm_{group_name}_{row['Category']}_{current_m_key}"):
                     item_details_modal(row['Category'], group_name, current_m_key)
             with col_modal_name:
                 st.markdown(f"<p style='color: gray; margin-bottom: 0px;'>{display_name}</p>", unsafe_allow_html=True)
